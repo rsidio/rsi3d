@@ -1,0 +1,14 @@
+{
+  "id": "{{project}}",
+  "title": "{{project}}",
+  "desc": "产出「{{purpose}}」",
+  "kind": "{{kind}}",
+  "vars": [
+    { "key": "project", "prompt": "项目名（也是默认目录名）", "default": "" },
+    { "key": "note", "prompt": "一句备注（可选）", "default": "由 {{project}} 模板生成" }
+  ],
+  "next": [
+    "cd \{{project}}",
+    "（在这里写上生成后要跑的步骤：装依赖 / 跑自测 / 发布）"
+  ]
+}

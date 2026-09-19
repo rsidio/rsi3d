@@ -1,0 +1,34 @@
+{
+  "spec": "rsi3d-plugin/v1",
+  "id": "{{plugin_id}}",
+  "title": "{{project}}",
+  "version": "0.1.0",
+  "author": "{{author}}",
+  "kind": "plugin",
+  "engine": ">=0.1.0",
+  "contributes": {
+    "evaluators": [
+      {
+        "id": "{{dimension}}",
+        "entry": "src/evaluator.mjs",
+        "title": "通道宽度：家具之间留不留得出走动的路"
+      }
+    ],
+    "tools": [
+      {
+        "id": "place_row",
+        "entry": "src/tool.mjs",
+        "title": "沿一条线批量等距摆放"
+      }
+    ],
+    "commands": [],
+    "importers": []
+  },
+  "permissions": {
+    "network": false,
+    "fs": "read-only",
+    "note": "插件默认不允许联网、只读文件；引擎在装载时会核对这里的声明"
+  },
+  "generatedAt": "{{date}}",
+  "generator": "rsi3d-harness scaffold/{{template}} {{engine_version}}"
+}

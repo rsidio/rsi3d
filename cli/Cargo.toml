@@ -1,0 +1,25 @@
+[package]
+name = "rsi3d"
+description = "rsi3d 官方命令行：发布 / 检索 / 验签，并驱动 3D RSI 运行"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["rsi3d", "3d", "rsi", "harness", "agent"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "rsi3d"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# 平台调用（只走公开 HTTP API，不 import 任何平台私有代码）
+ureq.workspace = true
+
+# 注：`[profile.release]`（strip + lto）定义在 workspace 根，见 ../Cargo.toml

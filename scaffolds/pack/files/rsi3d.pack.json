@@ -1,0 +1,35 @@
+{
+  "spec": "rsi3d-pack/v1",
+  "slug": "{{slug}}",
+  "kind": "bizpack",
+  "version": "{{version}}",
+  "name": "{{project}}",
+  "summary": "（一句话说明这个包交付什么行业知识 —— 这句话会出现在目录列表里）",
+  "domain": "{{domain}}",
+  "tags": ["{{domain}}"],
+  "includes": ["scene-templates", "material-spec", "workflow", "benchmark"],
+  "scenes": ["scenes/living-room.json"],
+  "evaluation": {
+    "dimensions": [
+      "layout.clearance",
+      "layout.containment",
+      "lighting.exposure",
+      "lighting.window",
+      "material.repeat",
+      "semantics.intent"
+    ],
+    "weights": {
+      "layout.clearance": 0.25,
+      "lighting.exposure": 0.25,
+      "lighting.window": 0.25,
+      "layout.containment": 0.1,
+      "material.repeat": 0.1,
+      "semantics.intent": 0.05
+    },
+    "note": "业务包可以覆盖默认权重 —— 这是行业知识的一部分，不是随便调的旋钮"
+  },
+  "billing": "buyout",
+  "offline": true,
+  "createdAt": "{{date}}",
+  "generator": "rsi3d-harness scaffold/{{template}} {{engine_version}}"
+}

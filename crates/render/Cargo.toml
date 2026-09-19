@@ -1,0 +1,16 @@
+[package]
+name = "rsi3d-harness-render"
+description = "rsi3d-harness 渲染层：把场景画成可判读的静态观测图（多视角 + id pass + 遮挡测量）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+rsi3d-harness-core = { path = "../core" }
+# 只用来编码 PNG（纯 Rust，无 C 依赖，可编到 wasm32）
+png = "0.17"

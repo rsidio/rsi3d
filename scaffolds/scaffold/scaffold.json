@@ -1,0 +1,18 @@
+{
+  "id": "scaffold",
+  "title": "模板插件（做一个你自己的脚手架模板）",
+  "desc": "生成一个外部模板的骨架：scaffold.json + files/。改完放进外部模板目录，即成为你自己的模板插件。",
+  "kind": "scaffold",
+  "vars": [
+    { "key": "project", "prompt": "模板 id（也是默认目录名）", "default": "" },
+    { "key": "purpose", "prompt": "这个模板要产出什么", "default": "一个 3D 资产流水线" },
+    { "key": "kind", "prompt": "分类：agent | plugin | pack | scaffold | other", "default": "other" }
+  ],
+  "next": [
+    "cd {{project}}",
+    "把要产出的文件放进 files/（内容里可写 \\{{变量}} 占位）",
+    "cp -R . ~/.rsi3d-harness/scaffolds/{{project}}    # 放进外部模板目录即生效",
+    "rsi3d-harness scaffold list                      # 确认它已被发现",
+    "rsi3d-harness scaffold new {{project}} --var project=demo"
+  ]
+}

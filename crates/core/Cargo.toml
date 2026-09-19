@@ -1,0 +1,13 @@
+[package]
+name = "rsi3d-harness-core"
+description = "rsi3d-harness 内核：统一场景表示（USC）+ 命令日志 + 版本/快照"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

@@ -1,0 +1,18 @@
+{
+  "id": "harness-plugin",
+  "title": "引擎插件（自定义评测维度 + 工具）",
+  "desc": "给引擎加能力的插件骨架：声明 rsi3d-plugin.json，实现一个评测维度与一个工具，自带自测。",
+  "kind": "plugin",
+  "vars": [
+    { "key": "project", "prompt": "项目名（也是默认目录名）", "default": "" },
+    { "key": "plugin_id", "prompt": "插件 id（小写字母与连字符）", "default": "" },
+    { "key": "dimension", "prompt": "自定义评测维度名", "default": "layout.walkway" },
+    { "key": "author", "prompt": "作者", "default": "your-name" }
+  ],
+  "next": [
+    "cd {{project}}",
+    "node selftest.mjs        # 用自带 fixture 跑一遍维度实现",
+    "把本目录放进 ~/.rsi3d-harness/plugins/{{plugin_id}}/ 即被引擎装载（H2 起）",
+    "上架：rsi3d publish --file rsi3d-plugin.json --kind plugin --slug {{plugin_id}}"
+  ]
+}

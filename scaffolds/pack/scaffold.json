@@ -1,0 +1,19 @@
+{
+  "id": "pack",
+  "title": "业务包（行业知识 + 场景模板 + 评测基准）",
+  "desc": "对齐平台 rsi3d-pack/v1 与 `rsi3d pack` 工具链：把行业知识打包成可买断、可离线交付的制品。",
+  "kind": "pack",
+  "vars": [
+    { "key": "project", "prompt": "项目名（也是默认目录名）", "default": "" },
+    { "key": "slug", "prompt": "制品 slug（小写字母与连字符）", "default": "", "from": "project" },
+    { "key": "domain", "prompt": "行业域：home | industry | culture | ecommerce | general", "default": "home" },
+    { "key": "version", "prompt": "版本", "default": "0.1.0" }
+  ],
+  "next": [
+    "cd {{project}}",
+    "rsi3d pack build . --slug {{slug}}        # 收集文件、逐文件 sha256、算 digest",
+    "rsi3d pack sign                           # HMAC 签名（密钥在 ~/.rsi3d/signing.key）",
+    "rsi3d verify rsi3d.pack.json              # 自己先验一遍",
+    "rsi3d publish --file rsi3d.pack.json --kind bizpack --slug {{slug}}"
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "spec": "rsi3d-workflow/v1",
+  "id": "{{slug}}-default",
+  "title": "{{project}} 默认流程",
+  "note": "工作流 = 把 RSI 循环的**阶段链与门禁**固定下来。没有它，每次跑 Run 都得重新商定怎么算完。",
+  "phases": ["generate", "evaluate", "critique", "mutate", "accept"],
+  "steps": [
+    {
+      "phase": "generate",
+      "action": "import_scene",
+      "params": { "scene": "scenes/living-room.json" },
+      "note": "导入场景模板作为基线"
+    },
+    {
+      "phase": "evaluate",
+      "action": "baseline",
+      "params": { "dimensions": "inherit" },
+      "note": "先给基线打分 —— 没有基线，后面的曲线没有意义"
+    },
+    {
+      "phase": "critique",
+      "action": "ask_agent",
+      "params": { "template": "指出最影响总分的一个问题，并给出可执行的修改命令" },
+      "note": "批判由 Agent 出；引擎只保证它拿到的事实是准的"
+    },
+    {
+      "phase": "mutate",
+      "action": "apply_edits",
+      "params": { "max_commands": 1, "must_be_reversible": true },
+      "note": "一轮只允许一条命令 —— 多条一起改，归因表就分不清是谁的功劳"
+    },
+    {
+      "phase": "accept",
+      "action": "gate",
+      "params": {
+        "min_total": 0.9,
+        "max_iters": 6,
+        "on_fail": "converged",
+        "human_review": true
+      },
+      "note": "门禁：分数达标才 accept；到轮次上限仍不达标 → converged（**不装作成功**）"
+    }
+  ],
+  "stop_conditions": [
+    { "kind": "no_op", "note": "Agent 提不出新命令" },
+    { "kind": "plateau", "params": { "rounds": 2, "epsilon": 0.01 }, "note": "连续两轮提升不足 0.01" },
+    { "kind": "budget", "params": { "max_iters": 6 } }
+  ],
+  "guardrails": [
+    { "rule": "每条编辑必须可逆", "why": "要能回到 best-so-far" },
+    { "rule": "不可逆命令前自动打快照", "why": "三范式里高斯/点云常只能裁剪或整体替换" },
+    { "rule": "不修改 scenes/ 与 benchmark/", "why": "那是基准，不是产物" }
+  ]
+}

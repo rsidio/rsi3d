@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "cli",
+    "crates/core",
+    "crates/mcp",
+    "crates/render",
+    "crates/scaffold",
+    "crates/native",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/rsi3d/rsi3d"
+homepage = "https://rsi3d.com"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 场景/日志哈希（与平台侧的 sha256 口径一致）
+sha2 = "0.10"
+# CLI 调用平台 HTTP API（不开 multipart 特性：那会拖进 multer，multipart 是手写的）
+ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
+
+[profile.release]
+strip = true
+lto = true

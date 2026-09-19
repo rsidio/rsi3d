@@ -1,0 +1,16 @@
+{
+  "id": "agent-app",
+  "title": "Agent 应用（驱动引擎跑 3D RSI 循环）",
+  "desc": "最小 Agent：observe → decide → edit → evaluate，打印分数曲线与归因表；自带 mock 引擎，零依赖即可跑通。",
+  "kind": "agent",
+  "vars": [
+    { "key": "project", "prompt": "项目名（也是默认目录名）", "default": "" },
+    { "key": "engine", "prompt": "引擎地址", "default": "http://127.0.0.1:8290" },
+    { "key": "iters", "prompt": "默认迭代轮数", "default": "6" }
+  ],
+  "next": [
+    "cd {{project}}",
+    "node agent.mjs --mock    # 自带 mock 引擎，立刻跑通一次完整循环（不需要 GPU 和真引擎）",
+    "node agent.mjs           # 对着真引擎跑（先启动 rsi3d-harness serve）"
+  ]
+}

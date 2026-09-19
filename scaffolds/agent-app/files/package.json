@@ -1,0 +1,14 @@
+{
+  "name": "{{project}}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "基于 rsi3d-harness 的 3D 资产 Agent（脚手架生成于 {{date}}，模板 {{template}}）",
+  "scripts": {
+    "mock": "node agent.mjs --mock",
+    "start": "node agent.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

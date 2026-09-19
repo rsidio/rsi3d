@@ -1,0 +1,56 @@
+{
+  "spec": "rsi3d-benchmark/v1",
+  "id": "{{slug}}-bench",
+  "note": "评测基准：把「这个包好不好用」变成可回归的用例。每个 case 都要有**预期区间**，否则只是演示。",
+  "dimensions": [
+    "layout.clearance",
+    "layout.containment",
+    "lighting.exposure",
+    "lighting.window",
+    "material.repeat",
+    "semantics.intent"
+  ],
+  "cases": [
+    {
+      "id": "case-sofa-blocks-window",
+      "scene": "scenes/living-room.json",
+      "intent": "把被沙发挡住的落地窗让出来，并修掉过曝",
+      "expect": {
+        "minTotal": 0.9,
+        "must_improve": ["lighting.window", "lighting.exposure"],
+        "max_iters": 6
+      },
+      "why": "业务包最核心的能力：Agent 能不能看出「挡光」并改对"
+    },
+    {
+      "id": "case-coffee-table-distance",
+      "scene": "scenes/living-room.json",
+      "intent": "茶几离沙发太远，挪到伸手可及的位置",
+      "expect": {
+        "minTotal": 0.85,
+        "must_improve": ["layout.clearance"],
+        "max_iters": 4
+      },
+      "why": "检验区间型规则：**太近和太远都不对**，只做单向优化的实现会在这里失败"
+    },
+    {
+      "id": "case-no-regression",
+      "scene": "scenes/living-room.json",
+      "intent": "在不破坏已有布局的前提下，只调光照",
+      "expect": {
+        "minTotal": 0.8,
+        "must_not_regress": ["layout.containment", "layout.clearance"],
+        "max_iters": 4
+      },
+      "why": "回归防线：修一个维度时不许把别的搞坏（Agent 最常见的事故）"
+    }
+  ],
+  "how_to_run": [
+    "把本包导入引擎：engine.import_pack('rsi3d.pack.json')",
+    "对每个 case：新建会话 → 跑 workflow/pipeline.json → 比对 expect",
+    "结果用 (case_id, 实际总分, 迭代数) 三元组记录，便于跨版本回归"
+  ],
+  "known_gaps": [
+    "「北欧风」的风格一致性目前只能靠参考图统计近似，没有语义级判据 —— 见 materials/material-spec.md 的说明"
+  ]
+}

@@ -1,0 +1,13 @@
+[package]
+name = "rsi3d-harness-scaffold"
+description = "rsi3d-harness 的插件式脚手架：模板发现 → 变量渲染 → 生成"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true

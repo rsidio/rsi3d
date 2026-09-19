@@ -1,0 +1,14 @@
+[package]
+name = "rsi3d-harness-mcp"
+description = "rsi3d-harness 的 MCP 服务（stdio）：让 VS Code / Cursor / Claude Code 等工具驱动 3D 资产引擎"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+rsi3d-harness-core = { path = "../core" }
+rsi3d-harness-render = { path = "../render" }

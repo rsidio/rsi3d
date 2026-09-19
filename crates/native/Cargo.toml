@@ -1,0 +1,21 @@
+[package]
+name = "rsi3d-harness-cli"
+description = "rsi3d-harness 引擎命令行（壳②/native；当前承载插件式脚手架）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "rsi3d-harness"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+rsi3d-harness-scaffold = { path = "../scaffold" }
+rsi3d-harness-core = { path = "../core" }
+rsi3d-harness-mcp = { path = "../mcp" }
+rsi3d-harness-render = { path = "../render" }

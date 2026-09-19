@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "rsi3d-harness": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/mcp.sh"],
+      "env": {
+        "RSI3D_HARNESS_ROOT": "${workspaceFolder}"
+      }
+    }
+  }
+}
