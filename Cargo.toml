@@ -6,6 +6,8 @@ members = [
     "crates/mcp",
     "crates/render",
     "crates/scaffold",
+    "crates/stream",
+    "crates/serve",
     "crates/native",
 ]
 

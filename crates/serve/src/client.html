@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rsi3d-harness · 流</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #232a33; --fg: #e6edf3;
+    --dim: #8b949e; --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 10px 14px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 13px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot.on { background: var(--ok); } .dot.err { background: var(--bad); }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--bg); position: relative; min-height: 0; }
+  section > .label {
+    position: absolute; top: 8px; left: 10px; z-index: 2; color: var(--dim);
+    background: rgba(14,17,22,.75); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line);
+  }
+  #scene-pane { height: 62vh; }
+  #c { width: 100%; height: 100%; display: block; }
+  #frame-pane { height: 62vh; display: flex; align-items: center; justify-content: center; }
+  #frame { max-width: 100%; max-height: 100%; image-rendering: crisp-edges; }
+  #frame-meta {
+    position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 10px;
+    color: var(--dim); background: rgba(14,17,22,.8); border: 1px solid var(--line);
+    border-radius: 4px; padding: 6px 8px;
+  }
+  #frame-meta b { color: var(--fg); font-weight: 600; }
+  #scene-note { position: absolute; left: 10px; right: 10px; bottom: 10px; color: var(--dim); }
+  footer {
+    border-top: 1px solid var(--line); background: var(--panel); padding: 10px 14px;
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  }
+  button {
+    background: #1f2630; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 5px; padding: 5px 10px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  .stat { color: var(--dim); }
+  .stat b { color: var(--fg); }
+  .warn { color: var(--warn); } .bad { color: var(--bad); } .ok { color: var(--ok); }
+  .gate { position: fixed; inset: 0; background: rgba(14,17,22,.96); display: none;
+          align-items: center; justify-content: center; z-index: 9; }
+  .gate.show { display: flex; }
+  .gate div { max-width: 420px; border: 1px solid var(--line); background: var(--panel); padding: 18px; border-radius: 8px; }
+  input { width: 100%; margin: 10px 0; padding: 6px 8px; font: inherit;
+          background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>rsi3d-harness <span class="stat">/ 远程渲染 · 转流</span></h1>
+  <span class="stat">场景流 <span id="scene-dot" class="dot"></span></span>
+  <span class="stat">图像流 <span id="frame-dot" class="dot"></span></span>
+  <span class="spacer"></span>
+  <span class="stat">rev <b id="rev">–</b></span>
+  <span class="stat">hash <b id="hash">–</b></span>
+  <span class="stat" id="conns"></span>
+</header>
+
+<main>
+  <section id="scene-pane">
+    <div class="label">场景流 · 客户端渲染（可自由旋转，不消耗服务端算力）</div>
+    <canvas id="c"></canvas>
+    <div id="scene-note"></div>
+  </section>
+  <section id="frame-pane">
+    <div class="label">图像流 · 服务端渲染（权威观测，可复现）</div>
+    <img id="frame" alt="服务端渲染帧">
+    <div id="frame-meta">
+      <span>视角 <b id="f-view">–</b></span>
+      <span>rev <b id="f-rev">–</b></span>
+      <span>sha <b id="f-hash">–</b></span>
+      <span>挡光带被遮挡 <b id="f-occ">–</b></span>
+      <span>帧 <b id="f-count">0</b></span>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span class="stat">服务端视角：</span>
+  <button data-view="top">俯视</button>
+  <button data-view="front">正视</button>
+  <button data-view="iso-sw">等轴·西南</button>
+  <button data-view="iso-se">等轴·东南</button>
+  <span class="spacer"></span>
+  <button class="primary" id="move-out">沙发挪出窗带</button>
+  <button id="move-back">沙发挪回窗下</button>
+  <button id="dim">灯光调暗</button>
+  <button id="undo">撤销一步</button>
+  <button id="rollback">回滚到 rev 1</button>
+  <span class="spacer"></span>
+  <span class="stat">增量 <b id="patches">0</b></span>
+  <span class="stat">全量 <b id="snapshots">0</b></span>
+  <span class="stat" id="alerts">告警 –</span>
+  <span class="stat" id="err"></span>
+</footer>
+
+<div class="gate" id="gate">
+  <div>
+    <div>需要访问令牌</div>
+    <div class="stat" style="margin-top:8px">
+      令牌在服务启动时打印（<code>rsi3d-harness serve</code> 的 stdout），
+      或用启动时给出的完整 URL 打开本页。
+    </div>
+    <input id="token-input" placeholder="粘贴 token" autocomplete="off">
+    <button class="primary" id="token-go">连接</button>
+  </div>
+</div>
+
+<script type="module" src="/client.js"></script>
+</body>
+</html>

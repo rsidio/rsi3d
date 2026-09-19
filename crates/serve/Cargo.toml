@@ -1,0 +1,16 @@
+[package]
+name = "rsi3d-harness-serve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rsi3d-harness 的远程渲染/转流服务端（HTTP + SSE）"
+publish = false
+
+[dependencies]
+serde_json.workspace = true
+rsi3d-harness-core = { path = "../core" }
+rsi3d-harness-render = { path = "../render" }
+rsi3d-harness-stream = { path = "../stream" }
+
+[dev-dependencies]
+serde_json.workspace = true

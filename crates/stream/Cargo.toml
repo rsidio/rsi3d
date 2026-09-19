@@ -1,0 +1,15 @@
+[package]
+name = "rsi3d-harness-stream"
+description = "rsi3d-harness 流协议：场景流（three.js）与图像流的会话层（传输无关）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+rsi3d-harness-core = { path = "../core" }
+rsi3d-harness-render = { path = "../render" }

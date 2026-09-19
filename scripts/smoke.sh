@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# rsi3d-harness 脚手架冒烟：模板发现 → 生成 → 产物自测 → 自举（外部模板）→ 与平台工具链打通。
+# rsi3d-harness 冒烟：模板发现 → 生成 → 产物自测 → 自举（外部模板）→ 与平台工具链打通
+#                 → 场景内核 → MCP（真进程）→ 渲染 → 转流（真起服务）→ npm 包。
 #
 # 全程在临时目录里跑，**不碰** ~/.rsi3d-harness 与你现有的项目。
 #
@@ -322,9 +323,92 @@ hr scene edit "${SCENE}" --out "${DOC2}" \
 OUT="$(hr scene render "${DOC2}" --views top 2>&1)"
 check "渲染：挪开后窗带恢复通光" "被遮挡 0%" "${OUT}"
 
-# ---------------------------------------------------------------- 9. npm 包（两个入口）
+# ---------------------------------------------------------------- 9. 转流（服务端 + 客户端）
 
-echo "── 9. npm 包（@rsi3d/cli：rsi3d + rsi3d-harness）──"
+echo "── 9. 远程渲染 / 转流（HTTP + SSE）──"
+PORT="${SMOKE_STREAM_PORT:-8393}"
+TOKEN="smoke-$$"
+SERVE_LOG="${TMP}/serve.log"
+"${BIN}" serve "${SCENE}" --port "${PORT}" --token "${TOKEN}" > "${SERVE_LOG}" 2>&1 &
+SERVE_PID=$!
+# 服务是后台起的：无论如何都要收掉，否则会留下占端口的进程
+cleanup_serve() { kill "${SERVE_PID}" 2>/dev/null; }
+trap 'cleanup_serve; cleanup' EXIT INT TERM
+
+BASE="http://127.0.0.1:${PORT}"
+for _ in $(seq 1 30); do
+  curl -s -o /dev/null "${BASE}/healthz" && break
+  sleep 0.2
+done
+
+check "转流：启动后打印带令牌的客户端地址" "?token=${TOKEN}" "$(cat "${SERVE_LOG}")"
+check "转流：明确说出两条流" "场景流（客户端渲染）" "$(cat "${SERVE_LOG}")"
+check "转流：healthz 可用（无需令牌）" '"protocol": "rsi3d-stream/v1"' "$(curl -s "${BASE}/healthz")"
+check "转流：无令牌拿不到流" "401" "$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/stream/scene")"
+check "转流：令牌不对也拒绝" "401" "$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/stream/scene?token=wrong")"
+check "转流：页面是内嵌的（无需令牌）" "rsi3d-harness" "$(curl -s "${BASE}/")"
+check "转流：客户端脚本真的用 EventSource" "EventSource" "$(curl -s "${BASE}/client.js")"
+
+# 场景流：首包应当是 welcome + 全量快照，事件 id = 状态版本
+SNAP_HEAD="$(curl -s -N --max-time 3 "${BASE}/stream/scene?token=${TOKEN}" | head -c 4000)"
+check "场景流：首事件是 welcome" "event: welcome" "${SNAP_HEAD}"
+check "场景流：握手声明协议版本" "rsi3d-stream/v1" "${SNAP_HEAD}"
+check "场景流：老实说清几何档次" "aabb-proxy" "${SNAP_HEAD}"
+check "场景流：事件 id 就是状态版本" "id: 0" "${SNAP_HEAD}"
+check "场景流：紧跟一张全量快照" "event: snapshot" "${SNAP_HEAD}"
+check "场景流：快照是真 glTF 2.0" '"version":"2.0"' "${SNAP_HEAD}"
+check "场景流：快照里带房间/窗/规则（客户端能自己画）" '"bandDepth":1.5' "${SNAP_HEAD}"
+check "场景流：每个节点自报几何档次（增量也自包含）" '"color"' "${SNAP_HEAD}"
+
+# 图像流：服务端渲染的帧 + 它自己的测量值随帧一起到（只看头部：帧很大）
+OUT="$(curl -s -N --max-time 3 "${BASE}/stream/frame?token=${TOKEN}&view=top" | head -c 1200)"
+check "图像流：发的是帧" "event: frame" "${OUT}"
+check "图像流：帧里带 PNG" "iVBORw0KGgo" "${OUT}"
+check "图像流：说清是哪一版、哪个视角" '"view":"top"' "${OUT}"
+
+# 命令：与 CLI 同一个信封（裸 {op,target,params,reason}），改完流里就该有增量
+OUT="$(curl -s -X POST -H 'Content-Type: application/json' \
+  --data '{"op":"transform","target":"sofa_01","params":{"translate":[0,0,1.3]},"reason":"挪出挡光带"}' \
+  "${BASE}/command?token=${TOKEN}" 2>&1)"
+check "命令：走 HTTP 也能改场景" '"revision": 1' "${OUT}"
+check "命令：回执带回 reason（可对账）" "挪出挡光带" "${OUT}"
+OUT="$(curl -s "${BASE}/observe?token=${TOKEN}")"
+check "观测：与 MCP/CLI 同一份（挡窗者已变空）" '"window_blockers": []' "${OUT}"
+
+# 断线续传：带上 Last-Event-ID 就只补差量，不再重发全量
+RESUME="$(curl -s -N --max-time 3 -H 'Last-Event-ID: 0' "${BASE}/stream/scene?token=${TOKEN}" | head -c 600)"
+check "续传：握手标明是续传" '"resumed":true' "${RESUME}"
+check "续传：只补增量" "event: patch" "${RESUME}"
+check "续传：不再重发全量" "0" "$(printf '%s' "${RESUME}" | grep -c 'event: snapshot' | tr -d ' ')"
+
+# 客户端：落盘帧与快照（同时也验证了自写的 SSE 客户端）
+FRAMES="${TMP}/frames"
+OUT="$("${BIN}" stream "${BASE}" --token "${TOKEN}" --kind frame --view top \
+  --out "${FRAMES}" --limit 5 --idle 3 2>&1)"
+check "客户端：能连上并说明是图像流" "图像流" "${OUT}"
+check "客户端：静止场景会明确解释\"为什么不推了\"" "服务端不重发" "${OUT}"
+# 前面已经把沙发挪出窗带：图像流带来的测量值必须是**当前**的，不能是旧的
+check "客户端：帧里带服务端自己测的遮挡率（结论随帧到，且是当前状态）" "遮挡 0%" "${OUT}"
+check "客户端：PNG 落盘且魔数正确" "89504e47" "$(head -c 4 "${FRAMES}/frame-0001.png" | od -An -tx1 | tr -d ' \n')"
+
+SCENE_OUT="${TMP}/scene-out"
+OUT="$("${BIN}" stream "${BASE}" --token "${TOKEN}" --kind scene --out "${SCENE_OUT}" --limit 2 2>&1)"
+check "客户端：场景流能导出 glTF" "snapshot.json" "${OUT}"
+check "客户端：导出的确实是 glTF 2.0" '"version": "2.0"' "$(cat "${SCENE_OUT}/snapshot.json")"
+
+# 安全：绑非回环时必须大喊
+"${BIN}" serve "${SCENE}" --port "${PORT}" --token "${TOKEN}" --bind 0.0.0.0 > "${TMP}/public.log" 2>&1 &
+PUB_PID=$!
+sleep 1
+check "安全：绑非回环地址会告警" "非回环" "$(cat "${TMP}/public.log")"
+kill "${PUB_PID}" 2>/dev/null
+
+kill "${SERVE_PID}" 2>/dev/null
+trap 'cleanup' EXIT INT TERM
+
+# ---------------------------------------------------------------- 10. npm 包（两个入口）
+
+echo "── 10. npm 包（@rsi3d/cli：rsi3d + rsi3d-harness）──"
 PKG="${ROOT}/packages/rsi3d-cli"
 if [ -n "${NODE_OK}" ]; then
   check "npm：包声明了 CLI 入口" "bin/rsi3d.js" "$(cat "${PKG}/package.json")"
@@ -359,4 +443,4 @@ echo "── 结果：通过 ${PASS} · 失败 ${FAIL} · 跳过 ${SKIP} ──�
 if [ "${FAIL}" -gt 0 ]; then
   exit 1
 fi
-echo "✓ rsi3d-harness 冒烟全部通过（脚手架 + 场景内核 + MCP + 渲染 + npm）"
+echo "✓ rsi3d-harness 冒烟全部通过（脚手架 + 场景内核 + MCP + 渲染 + 转流 + npm）"

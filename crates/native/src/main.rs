@@ -18,6 +18,9 @@ use rsi3d_harness_core as engine;
 use rsi3d_harness_render as render;
 use engine::{CommandRequest, Document};
 
+/// `serve` / `stream` 两个子命令（远程渲染 / 转流）。
+mod serve_cmd;
+
 #[derive(Parser)]
 #[command(
     name = "rsi3d-harness",
@@ -31,6 +34,8 @@ use engine::{CommandRequest, Document};
         rsi3d-harness scene show scene.json\n  \
         rsi3d-harness scene edit scene.json --cmd '{\"op\":\"transform\",\"target\":\"sofa_01\",\"params\":{\"translate\":[0,0,1.3]},\"reason\":\"把沙发挪出窗带\"}'\n  \
         rsi3d-harness scene verify doc.json\n  \
+        rsi3d-harness serve scene.json --port 8283 --open（浏览器里两条流并排看）\n  \
+        rsi3d-harness stream http://127.0.0.1:8283 --token <T> --kind frame --out frames/\n  \
         rsi3d-harness mcp --root .（在 VS Code 里由 .vscode/mcp.json 启动）"
 )]
 struct Cli {
@@ -63,6 +68,56 @@ enum Cmd {
         /// 允许读写的工作目录（缺省用当前目录）；引擎不会碰这之外的任何文件
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
+    },
+    /// 远程渲染 / 转流：把场景推成 three.js 场景流 + 图像流（HTTP + SSE）
+    Serve {
+        /// 场景或文档文件
+        file: PathBuf,
+        /// 绑定地址；缺省只绑回环（绑到 0.0.0.0 会告警）
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
+        /// 端口；0 = 让系统随机挑一个
+        #[arg(long, default_value_t = 8283)]
+        port: u16,
+        /// 图像流的帧率上限（0 = 不限）
+        #[arg(long, default_value_t = 4)]
+        fps: u32,
+        /// 指定访问令牌；缺省随机生成并打印
+        #[arg(long)]
+        token: Option<String>,
+        /// 启动后用浏览器打开客户端页（macOS `open`）
+        #[arg(long)]
+        open: bool,
+    },
+    /// 客户端：订阅远端流并落盘（帧存 PNG、快照导出 glTF）
+    Stream {
+        /// 服务地址，如 http://127.0.0.1:8283
+        url: String,
+        /// 访问令牌
+        #[arg(long)]
+        token: String,
+        /// 要订阅的流：scene | frame
+        #[arg(long, default_value = "frame")]
+        kind: String,
+        /// 图像流的视角：top | front | iso-sw | iso-se
+        #[arg(long, default_value = "iso-sw")]
+        view: String,
+        /// 输出目录：帧存 frame-0001.png，场景流存 snapshot.json
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// 起手就当自己已经看到过这个版本（即模拟 `Last-Event-ID`）—— 用来手动验续传
+        #[arg(long, value_name = "REV")]
+        from: Option<u32>,
+        /// 收到多少条消息后退出（0 = 一直跑）
+        #[arg(long, default_value_t = 0)]
+        limit: u64,
+        /// 多久没新消息就算"没动静了"并收工（秒）。
+        /// 静止场景**本就不该有流量**（服务端只推变化），所以这不是错误。
+        #[arg(long, default_value_t = 8)]
+        idle: u64,
+        /// 断开后最多重连几次（重连会用 Last-Event-ID 续传）
+        #[arg(long, default_value_t = 3)]
+        retries: u32,
     },
 }
 
@@ -200,6 +255,36 @@ fn dispatch(cli: &Cli) -> Result<()> {
             } => cmd_scene_render(cli, file, out.as_deref(), views.as_deref(), *width, *height),
         },
         Cmd::Mcp { root } => cmd_mcp(root.as_deref()),
+        Cmd::Serve {
+            file,
+            bind,
+            port,
+            fps,
+            token,
+            open,
+        } => serve_cmd::cmd_serve(cli, file, bind, *port, *fps, token.as_deref(), *open),
+        Cmd::Stream {
+            url,
+            token,
+            kind,
+            view,
+            out,
+            from,
+            limit,
+            idle,
+            retries,
+        } => serve_cmd::cmd_stream(
+            cli,
+            url,
+            token,
+            kind,
+            view,
+            out.as_deref(),
+            *from,
+            *limit,
+            *idle,
+            *retries,
+        ),
     }
 }
 

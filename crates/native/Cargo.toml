@@ -19,3 +19,5 @@ rsi3d-harness-scaffold = { path = "../scaffold" }
 rsi3d-harness-core = { path = "../core" }
 rsi3d-harness-mcp = { path = "../mcp" }
 rsi3d-harness-render = { path = "../render" }
+rsi3d-harness-stream = { path = "../stream" }
+rsi3d-harness-serve = { path = "../serve" }

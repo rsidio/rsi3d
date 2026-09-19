@@ -512,6 +512,8 @@ dependencies = [
  "rsi3d-harness-mcp",
  "rsi3d-harness-render",
  "rsi3d-harness-scaffold",
+ "rsi3d-harness-serve",
+ "rsi3d-harness-stream",
  "serde_json",
 ]
 
@@ -552,6 +554,27 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "rsi3d-harness-serve"
+version = "0.1.0"
+dependencies = [
+ "rsi3d-harness-core",
+ "rsi3d-harness-render",
+ "rsi3d-harness-stream",
+ "serde_json",
+]
+
+[[package]]
+name = "rsi3d-harness-stream"
+version = "0.1.0"
+dependencies = [
+ "rsi3d-harness-core",
+ "rsi3d-harness-render",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
