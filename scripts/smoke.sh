@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # rsi3d-harness 冒烟：模板发现 → 生成 → 产物自测 → 自举（外部模板）→ 与平台工具链打通
-#                 → 场景内核 → MCP（真进程）→ 渲染 → 转流（真起服务）→ npm 包。
+#                 → 场景内核 → MCP（真进程）→ 渲染 → 转流（真起服务）→ 导出 glTF → npm 包。
 #
 # 全程在临时目录里跑，**不碰** ~/.rsi3d-harness 与你现有的项目。
 #
@@ -348,6 +348,47 @@ check "转流：无令牌拿不到流" "401" "$(curl -s -o /dev/null -w '%{http_
 check "转流：令牌不对也拒绝" "401" "$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/stream/scene?token=wrong")"
 check "转流：页面是内嵌的（无需令牌）" "rsi3d-harness" "$(curl -s "${BASE}/")"
 check "转流：客户端脚本真的用 EventSource" "EventSource" "$(curl -s "${BASE}/client.js")"
+# 契约产物同样是现算的：与 `hr contract --out` 写出来的字节必须一致
+check "转流：/contract 索引无需令牌" '"scene.schema.json"' "$(curl -s "${BASE}/contract")"
+check "转流：schema 与派生结果逐字节一致" "0" \
+  "$(diff <(curl -s "${BASE}/contract/scene.schema.json") "${ROOT}/contract/scene.schema.json" >/dev/null 2>&1; echo $?)"
+check "转流：契约里没有不存在的产物" "404" "$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/contract/nope.json")"
+
+# 能力声明（借 glow 的纪律：能力是声明出来的，不是被假设的）
+# 1) 握手回声：服务端把我们听成了什么，客户端能对账
+DECL="$(curl -s -N --max-time 2 \
+  "${BASE}/stream/scene?token=${TOKEN}&agent=rsi3d-third-party%2F9.9&cap=webgl1,telepathy" | head -c 900)"
+check "能力：握手回声客户端身份" '"client_agent":"rsi3d-third-party/9.9"' "${DECL}"
+check "能力：回声里带上我们声明的能力" '"webgl1"' "${DECL}"
+check "能力：不认识的能力名也**不丢**（原样带着）" 'telepathy' "${DECL}"
+check "能力：不认识的能力名会大声告警（不静默）" "不认识的能力" "$(cat "${SERVE_LOG}")"
+check "能力：自相矛盾的声明会被标出来（webgl1+webgl2）" "自相矛盾" \
+  "$(curl -s -N --max-time 2 "${BASE}/stream/scene?token=${TOKEN}&cap=webgl1,webgl2" >/dev/null 2>&1; cat "${SERVE_LOG}")"
+# 显示预算（wgpu 那套里的 limits）：服务端**只缩不放**，并等比
+FRAME_SMALL="$(curl -s -N --max-time 2 \
+  "${BASE}/stream/frame?token=${TOKEN}&view=top&agent=smoke-budget&cap=image&px=240x180" | head -c 900)"
+check "能力：图像流按客户端预算缩到 240×180" '"width":240' "${FRAME_SMALL}"
+check "能力：等比缩放（高度也缩了，不是只改宽）" '"height":180' "${FRAME_SMALL}"
+# 2) 服务端名册：连上就写（这里用真在跑的命令行客户端）
+"${BIN}" stream "${BASE}" --token "${TOKEN}" --kind frame --view top --limit 0 --idle 6 \
+  > "${TMP}/cli-stream.log" 2>&1 &
+CLI_STREAM_PID=$!
+sleep 1.2
+ROSTER="$(curl -s "${BASE}/healthz")"
+check "能力：名册里能看到命令行客户端" 'rsi3d-cli/' "${ROSTER}"
+check "能力：名册里能看到它声明了 headless" 'headless' "${ROSTER}"
+check "能力：名册报出**派生档位**（不让人自己拼字符串）" '"render_tier": "headless"' "${ROSTER}"
+check "能力：名册报出实际会给它发多大的帧" '"frame_px"' "${ROSTER}"
+check "能力：healthz 也公开词汇表的类别与依赖（抄 wgpu 的 features/downlevel 之分）" '"needs_any"' "${ROSTER}"
+check "能力：名册里能看到它连的是哪条流" '"kind": "frame"' "${ROSTER}"
+check "能力：healthz 也公开词汇表（外部工具靠它知道能声明什么）" 'capabilities_known' "${ROSTER}"
+kill "${CLI_STREAM_PID}" 2>/dev/null
+# 3) 断开就抹：名册反映的是**当下**，不是"连过"的历史
+for _ in $(seq 1 40); do
+  [ "$(curl -s "${BASE}/healthz" | grep -c 'rsi3d-cli/')" = "0" ] && break
+  sleep 0.1
+done
+check "能力：断开后立刻从名册消失（不是等心跳）" "0" "$(curl -s "${BASE}/healthz" | grep -c 'rsi3d-cli/')"
 
 # 场景流：首包应当是 welcome + 全量快照，事件 id = 状态版本
 SNAP_HEAD="$(curl -s -N --max-time 3 "${BASE}/stream/scene?token=${TOKEN}" | head -c 4000)"
@@ -365,6 +406,7 @@ OUT="$(curl -s -N --max-time 3 "${BASE}/stream/frame?token=${TOKEN}&view=top" | 
 check "图像流：发的是帧" "event: frame" "${OUT}"
 check "图像流：帧里带 PNG" "iVBORw0KGgo" "${OUT}"
 check "图像流：说清是哪一版、哪个视角" '"view":"top"' "${OUT}"
+check "图像流：帧自报家门（谁渲的）" '"renderer":"cpu-raster/v1"' "${OUT}"
 
 # 命令：与 CLI 同一个信封（裸 {op,target,params,reason}），改完流里就该有增量
 OUT="$(curl -s -X POST -H 'Content-Type: application/json' \
@@ -389,6 +431,7 @@ check "客户端：能连上并说明是图像流" "图像流" "${OUT}"
 check "客户端：静止场景会明确解释\"为什么不推了\"" "服务端不重发" "${OUT}"
 # 前面已经把沙发挪出窗带：图像流带来的测量值必须是**当前**的，不能是旧的
 check "客户端：帧里带服务端自己测的遮挡率（结论随帧到，且是当前状态）" "遮挡 0%" "${OUT}"
+check "客户端：每帧自报来源档（落盘的帧得能说清谁渲的）" "cpu-raster/v1（证据档）" "${OUT}"
 check "客户端：PNG 落盘且魔数正确" "89504e47" "$(head -c 4 "${FRAMES}/frame-0001.png" | od -An -tx1 | tr -d ' \n')"
 
 SCENE_OUT="${TMP}/scene-out"
@@ -406,9 +449,26 @@ kill "${PUB_PID}" 2>/dev/null
 kill "${SERVE_PID}" 2>/dev/null
 trap 'cleanup' EXIT INT TERM
 
-# ---------------------------------------------------------------- 10. npm 包（两个入口）
+# ---------------------------------------------------------------- 9. 导出（交给外部工具链）
 
-echo "── 10. npm 包（@rsi3d/cli：rsi3d + rsi3d-harness）──"
+echo "── 10. 导出：标准 glTF 2.0（Blender / Fyrox / three.js 都能读）──"
+GLTF="${TMP}/model.gltf"
+OUT="$(hr scene export "${SCENE}" --out "${GLTF}" 2>&1)"
+check "导出：报出格式" "glTF 2.0" "${OUT}"
+check "导出：报出节点与灯光数" "节点 4 · 灯光 2" "${OUT}"
+check "导出：如实说明几何档次（包围盒代理）" "包围盒代理" "${OUT}"
+check "导出：给出可交接的用法" "Blender" "${OUT}"
+check "导出：文件里的 glTF 版本" '"version": "2.0"' "$(cat "${GLTF}")"
+check "导出：几何内嵌成单文件（data URI）" "data:application/octet-stream;base64," "$(cat "${GLTF}")"
+# 这条是被一次**外部验收**逼出来的：`nodes` 只是节点池，`scenes[].nodes` 才是场景内容。
+# 只填节点池的话文件合法但任何标准加载器都读到空场景（gltf-transform 会报 renderVertexCount: 0）。
+ROOTS="$(sed -n '/"scenes"/,/^  \]/p' "${GLTF}" | grep -cE '^ +[0-9]+,?$' | tr -d ' ')"
+check "导出：场景真的引用了全部节点（否则外部加载器读到空场景）" "4" "${ROOTS}"
+check "导出：不支持的格式会被明确拒绝" "目前只有 gltf" "$(hr scene export "${SCENE}" --format usdz 2>&1)"
+
+# ---------------------------------------------------------------- 11. npm 包（两个入口）
+
+echo "── 11. npm 包（@rsi3d/cli：rsi3d + rsi3d-harness）──"
 PKG="${ROOT}/packages/rsi3d-cli"
 if [ -n "${NODE_OK}" ]; then
   check "npm：包声明了 CLI 入口" "bin/rsi3d.js" "$(cat "${PKG}/package.json")"
@@ -436,6 +496,248 @@ else
   skip "npm 包入口" "未找到 node"
 fi
 
+# ---------------------------------------------------------------- 12. 契约（从 Rust 类型派生）
+
+echo "── 12. 契约：从 Rust 类型派生给非 Rust 消费者的形状 ──"
+OUT="$(hr contract 2>&1)"
+check "契约：说明产物是派生的、勿手改" "派生自 Rust 类型" "${OUT}"
+check "契约：列出 4 个产物" "scene.example.json" "${OUT}"
+check "契约：报出各块的已知键数" "stream_server" "${OUT}"
+OUT="$(hr contract --check 2>&1)"
+check "契约：已提交的产物与 Rust 类型一致" "一致" "${OUT}"
+
+CONTRACT_OUT="${TMP}/contract"
+hr contract --out "${CONTRACT_OUT}" > /dev/null 2>&1
+check "契约：写出产物" "1" "$([ -f "${CONTRACT_OUT}/keys.json" ] && echo 1 || echo 0)"
+check "契约：键清单用 JSON 名（spanX / bandDepth 而不是 span_x）" "1" \
+  "$([ "$(grep -c 'spanX' "${CONTRACT_OUT}/keys.json")" -gt 0 ] && [ "$(grep -c 'bandDepth' "${CONTRACT_OUT}/keys.json")" -gt 0 ] && echo 1 || echo 0)"
+# 只查 schema 的键清单：keys.json 的说明文字里会引用 band_depth 作为反面例子
+check "契约：键清单里不会出现手写错法（band_depth / span_x）" "0" \
+  "$(grep -c 'band_depth\|span_x' "${CONTRACT_OUT}/scene.schema.json" 2>/dev/null || echo 0)"
+check "契约：schema 是 draft 2020-12" "json-schema.org/draft/2020-12" "$(cat "${CONTRACT_OUT}/scene.schema.json")"
+check "契约：schema 在字段描述里声明了已知键清单" "x-known-keys" "$(cat "${CONTRACT_OUT}/scene.schema.json")"
+check "契约：样例里没有多余说明字段（样例会被照抄）" "0" "$(grep -c '\$comment' "${CONTRACT_OUT}/scene.example.json")"
+
+# 门禁自检：把产物改坏，--check 必须变红（否则这道门就是摆设）
+mkdir -p "${TMP}/tampered" && cp "${CONTRACT_OUT}"/*.json "${TMP}/tampered/"
+sed -i.bak 's/"number"/"integer"/' "${TMP}/tampered/keys.json" 2>/dev/null || \
+  perl -pi -e 's/"number"/"integer"/' "${TMP}/tampered/keys.json"
+check "契约：产物被改坏后 --check 会失败（证明门禁不是摆设）" "不一致" \
+  "$(hr contract --out "${TMP}/tampered" --check 2>&1)"
+check "契约：--check 失败时告诉你怎么重新生成" "contract --out" \
+  "$(hr contract --out "${TMP}/tampered" --check 2>&1)"
+
+# ---------------------------------------------------------------- 13. 导入（外部资产）
+
+echo "── 13. 导入：自己读 / 请 Blender / 老实说不行 ──"
+
+IO="${TMP}/io"
+mkdir -p "${IO}"
+
+# 三条路都得在格式表里明说
+FMT="$(hr scene import --formats)"
+check "导入：格式表分三条路（自己读 / 经 Blender / 请上游导出）" "自己读" "${FMT}"
+check "导入：格式表里 Blender 那条路" "经 Blender" "${FMT}"
+check "导入：B-rep 那条路说清是"请上游导出网格"" "请上游导出网格" "${FMT}"
+check "导入：格式表不是嘴上的（自己读的那几个都在表里）" "Wavefront OBJ" "${FMT}"
+
+# 自己读：OBJ（一个 2×2×2 的盒子；行尾反斜杠会吞换行，所以这里用一行一个 \\n）
+printf 'o Box_A\nv -1 -1 -1\nv 1 -1 -1\nv 1 1 -1\nv -1 1 -1\nv -1 -1 1\nv 1 -1 1\nv 1 1 1\nv -1 1 1\nf 1 2 3 4\nf 5 6 7 8\nf 1 2 6 5\nf 3 4 8 7\nf 1 4 8 5\nf 2 3 7 6\n' > "${IO}/box.obj"
+OBJ_REPORT="$(hr scene import "${IO}/box.obj" --out "${IO}/box.scene.json" 2>&1)"
+check "导入：OBJ 自己读（对象数/顶点/三角面都在报告里）" "1 个对象 · 8 顶点 · 12 三角面" "${OBJ_REPORT}"
+check "导入：OBJ 不带坐标系声明，就老实写 unknown（不猜）" "源文件 unknown" "${OBJ_REPORT}"
+check "导入：没有坐标系/单位的格式会出告警" "不猜轴向" "${OBJ_REPORT}"
+check "导入：报告里给出下一步（怎么渲染、怎么起服务）" "scene render" "${OBJ_REPORT}"
+check "导入：几何 side-car 与场景同目录同前缀" "box.scene.mesh.glb" "${OBJ_REPORT}"
+check "导入：side-car 真的落盘了" "box.scene.mesh.glb" "$(ls "${IO}")"
+check "导入：side-car 是标准 GLB（magic 是 glTF）" "glTF" "$(head -c 4 "${IO}/box.scene.mesh.glb")"
+check "导入：产出的场景内核读得回来" "Box_A" "$(hr scene show "${IO}/box.scene.json" 2>&1)"
+check "导入：节点上挂着 mesh_ref（客户端据此显示真网格）" "mesh_ref" "$(cat "${IO}/box.scene.json")"
+
+# 截断必须说出来
+printf 'o A\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\no B\nv 5 0 0\nv 6 0 0\nv 5 1 0\nf 1 2 3\n' > "${IO}/two.obj"
+check "导入：--limit 截断要说出来，并且说清原文件有几个" "被截断了" \
+  "$(hr scene import "${IO}/two.obj" --limit 1 --out "${IO}/two.scene.json" 2>&1)"
+
+# 单位提醒（毫米模型不缩放就是"体育场"）
+printf 'o Big\nv 0 0 0\nv 2000 0 0\nv 2000 100 0\nv 0 100 0\nf 1 2 3 4\n' > "${IO}/mm.obj"
+check "导入：尺寸异常会提醒 --unit-scale" "unit-scale" \
+  "$(hr scene import "${IO}/mm.obj" --out "${IO}/mm.scene.json" 2>&1)"
+check "导入：--unit-scale 0.001 把 2000mm 变成 2m" "x 0.000…2.000" \
+  "$(hr scene import "${IO}/mm.obj" --unit-scale 0.001 --out "${IO}/mm2.scene.json" 2>&1)"
+
+# B-rep 不许假装能读
+printf 'ISO-10303-21;\n' > "${IO}/part.stp"
+STEP_ERR="$(hr scene import "${IO}/part.stp" --out "${IO}/x.json" 2>&1)"
+check "导入：STEP 明确拒绝，并说清是 B-rep 不是网格" "B-rep" "${STEP_ERR}"
+check "导入：拒绝时给出路（导出 STL/OBJ/glTF）" "STL / OBJ / glTF" "${STEP_ERR}"
+
+# 未知扩展名：把支持列表摆出来
+printf 'x' > "${IO}/thing.xyz"
+check "导入：不认识的扩展名会列出支持哪些" "scene import --formats" \
+  "$(hr scene import "${IO}/thing.xyz" --out "${IO}/y.json" 2>&1)"
+
+# 请 Blender：有就真跑一遍，没有就明说跳过（不静默通过）
+BLENDER="$(hr scene import --formats >/dev/null 2>&1; command -v blender 2>/dev/null || true)"
+if [ -x /Applications/Blender.app/Contents/MacOS/Blender ]; then
+  /Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python-expr \
+    "import bpy; bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.mesh.primitive_cube_add(size=1.0); bpy.context.object.name='Cube_A'; bpy.ops.mesh.primitive_plane_add(size=4.0, location=(0,0,-0.5)); bpy.context.object.name='Floor_01'; bpy.ops.wm.save_as_mainfile(filepath='${IO}/fixture.blend')" \
+    >/dev/null 2>&1
+  BLEND_REPORT="$(hr scene import "${IO}/fixture.blend" --out "${IO}/fixture.scene.json" 2>&1)"
+  check "导入：.blend 经本机 Blender 转 GLB 后读入" "经手：Blender" "${BLEND_REPORT}"
+  check "导入：报告里写清源文件坐标系 → 场景坐标系" "源文件 RUF" "${BLEND_REPORT}"
+  check "导入：转轴这件事会出告警（不静默）" "转轴" "${BLEND_REPORT}"
+  check "导入：平面在光栅里看不见，会点名" "Floor_01" "${BLEND_REPORT}"
+  check "导入：blend 的 side-car 也是 GLB" "glTF" "$(head -c 4 "${IO}/fixture.scene.mesh.glb")"
+else
+  skip "导入：.blend 经 Blender 转 GLB" "这台机器上没装 Blender"
+fi
+
+# 用户资产里那两个非标准 blend：错误必须有用（不是"失败"两个字）
+if [ -f "${ROOT}/../assets/H0_URDF_rigged.blend" ]; then
+  BAD="$(hr scene import "${ROOT}/../assets/H0_URDF_rigged.blend" --out "${IO}/h0.json" 2>&1)"
+  check "导入：非标准 blend 的错误里点名是谁说的" "读不了这个文件。Blender 说" "${BAD}"
+  check "导入：把 Blender 的原话带出来（不是我们转述的"失败"）" "not a blend file" "${BAD}"
+else
+  skip "导入：非标准 blend 的诊断" "assets/ 里没有那个文件"
+fi
+
+# ---------------------------------------------------------------- 14. 渲染模式（探测 → 判定 → 应用）
+
+echo "── 14. 渲染模式：按主机能力判档，判不了的给得出路 ──"
+
+RM="${TMP}/render-mode"
+mkdir -p "${RM}"
+
+# 规则表：档位、给的限制、出路都要看得见
+POLICY_OUT="$(hr render-mode)"
+check "渲染模式：规则表列出全部档位" "client-full" "${POLICY_OUT}"
+check "渲染模式：最强档要 WebGL2" "GPU webgl2" "${POLICY_OUT}"
+check "渲染模式：兜底档是 frame-only（本机不渲）" "frame-only" "${POLICY_OUT}"
+check "渲染模式：无屏形态单独一档" "headless" "${POLICY_OUT}"
+
+# 规则表也是契约产物（平台 /api/render/policy 发同一份）
+check "渲染模式：规则表进了契约产物" "render-policy.json" "$(ls contract/ 2>/dev/null || echo '')"
+check "渲染模式：产物里的规则表与服务端同源" "client-full" "$(cat contract/render-policy.json 2>/dev/null)"
+
+# 强机 → 满档
+cat > "${RM}/strong.json" <<'JSON'
+{"agent":"rsi3d-web/0.1.0","form":"screen","gpu":{"api":"webgl2","webgpu":true,"max_texture":16384},"cpu":{"cores":10,"platform":"macos"},"display":{"viewport":[1920,1080],"dpr":2},"bench":{"sustained_fps":58,"frames":116,"ms":2000},"privacy":"hashed"}
+JSON
+STRONG="$(hr render-mode --profile "${RM}/strong.json")"
+check "渲染模式：强机判满档" "渲染模式 client-full" "${STRONG}"
+check "渲染模式：满档给真网格 + 两条流" "几何 real · 订阅 both" "${STRONG}"
+check "渲染模式：满档不给建议（够用的时候别啰嗦）" "0" "$(printf '%s' "${STRONG}" | grep -c '→' || echo 0)"
+check "渲染模式：判定自报是谁算的（离线=local）" "local" "${STRONG}"
+
+# 弱机 → 降档 + 理由 + 出路
+WEAK="$(hr render-mode --profile "${TMP}/io/two.obj" 2>&1 || true)"   # 故意喂错：要的是有用报错
+check "渲染模式：喂错文件时给出路（不是"失败"两个字）" "合法的主机参数" "${WEAK}"
+
+cat > "${RM}/weak.json" <<'JSON'
+{"agent":"rsi3d-web/0.1.0","form":"screen","gpu":{"api":"webgl1","max_texture":2048,"software":true},"cpu":{"cores":2,"platform":"windows"},"display":{"viewport":[640,480],"dpr":1},"bench":{"sustained_fps":9,"frames":18,"ms":2000},"privacy":"hashed"}
+JSON
+WEAKOUT="$(hr render-mode --profile "${RM}/weak.json")"
+check "渲染模式：瘦客户端降到 client-minimal" "渲染模式 client-minimal" "${WEAKOUT}"
+check "渲染模式：降档要收紧像素预算" "≤ 960×600" "${WEAKOUT}"
+check "渲染模式：降档只画包围盒代理" "几何 aabb-proxy" "${WEAKOUT}"
+check "渲染模式：降档要说明差什么（可执行的数字）" "需要 4 核，本机 2 核" "${WEAKOUT}"
+check "渲染模式：降档要给得出一路" "只订阅服务端图像流" "${WEAKOUT}"
+check "渲染模式：默认脱敏要说出来" "只上报了哈希" "${WEAKOUT}"
+
+# 无屏形态
+cat > "${RM}/headless.json" <<'JSON'
+{"agent":"rsi3d-harness/0.1.0","form":"headless","cpu":{"cores":16},"privacy":"omitted"}
+JSON
+HEADLESS="$(hr render-mode --profile "${RM}/headless.json")"
+check "渲染模式：无屏形态不订阅任何流" "订阅 none" "${HEADLESS}"
+
+# 平台不可达时的**离线兜底**：本地服务也能判（同一份规则表）
+( "${BIN}" serve scaffolds/agent-app/files/scene.json --port "${RM_PORT:-8471}" --token m > "${RM}/serve.log" 2>&1 & echo $! > "${RM}/pid" )
+sleep 2
+if [ -s "${RM}/serve.log" ]; then
+  CAP="$(curl -s -X POST -H 'Content-Type: application/json' \
+    -d @"${RM}/weak.json" "http://127.0.0.1:${RM_PORT:-8471}/capability?token=m" 2>/dev/null)"
+  check "渲染模式：本地 /capability 判出同一档（离线兜底）" "client-minimal" "${CAP}"
+  # 坏输入不许静默降档：字段都能缺省，`{"nope":1}` 会被解析成"什么都没报的机器"→ 兜底档
+  BADP="$(curl -s -m 5 -X POST -H 'Content-Type: application/json' -d '{"nope":1}' \
+    "http://127.0.0.1:${RM_PORT:-8471}/capability?token=m" 2>/dev/null)"
+  check "渲染模式：坏输入明确拒绝（不许静默判成低档）" "bad_profile" "${BADP}"
+  check "渲染模式：兜底判定自报 authority=local（不冒充权威）" "local" \
+    "$(printf '%s' "${CAP}" | python3 -c "import json,sys; print(json.load(sys.stdin)['verdict']['authority'])" 2>/dev/null)"
+  check "渲染模式：判定里带规则表版本（两边要能对账）" "1" \
+    "$(printf '%s' "${CAP}" | python3 -c "import json,sys; print(json.load(sys.stdin)['verdict']['policy_version'])" 2>/dev/null)"
+  # 带上 -m：冒烟里没有超时的 curl 曾经偶发拿到空体（服务端没问题，是客户端没等到）
+  HZ="$(curl -s -m 5 "http://127.0.0.1:${RM_PORT:-8471}/healthz" 2>&1)"
+  check "渲染模式：上报的主机参数进了 healthz（运维能查为什么降档）" "client-minimal" "${HZ}"
+  check "渲染模式：/contract/render-policy.json 直接可发（平台同源）" "client-full" \
+    "$(curl -s "http://127.0.0.1:${RM_PORT:-8471}/contract/render-policy.json?token=m" 2>/dev/null)"
+  # 帧率上限：服务端只缩不放（要更高会被按下限给）
+  check "渲染模式：帧率只缩不放（客户端要 999 时服务端记一条说明）" "只缩不放" \
+    "$(curl -s -m 2 -N "http://127.0.0.1:${RM_PORT:-8471}/stream/frame?token=m&view=top&fps=999" >/dev/null 2>&1; grep -o '只缩不放' "${RM}/serve.log" | head -1)"
+else
+  skip "渲染模式：本地 /capability 离线兜底" "服务没起来"
+fi
+kill "$(cat "${RM}/pid")" 2>/dev/null || pkill -f "rsi3d-harness serve" 2>/dev/null || true
+sleep 0.5
+
+# ---------------------------------------------------------------- 技能包与插件包
+# 这两个目录是**会被分发出去**的产物：包里少一个文件，别人装完就少一块能力；
+# 目录里多一个文件而清单没登记，打包会拒（这是好事，但不能等到发布时才发现）。
+# 所以这里把「清单 == 目录实际内容」钉住，再让**第三方实现**（系统 unzip）读一遍字节。
+
+echo
+echo "── 技能包 / 插件包（清单自洽 + 第三方可读）──────"
+
+selfcheck_bundle() { # selfcheck_bundle <目录> <kind> <期望 name>
+  local dir="$1" kind="$2" want="$3"
+  if [ ! -d "${dir}" ]; then
+    skip "包：${dir}" "目录不存在"
+    return
+  fi
+  # 清单里的 files[] 必须与目录里的真实文件（去掉清单自身）**逐个对上**
+  MISSING="$(python3 - "${dir}" "${kind}" <<'PY'
+import json, pathlib, sys
+d = pathlib.Path(sys.argv[1])
+kind = sys.argv[2]
+man = d / f"{kind}.json"
+m = json.loads(man.read_text())
+declared = sorted(m.get("files", []))
+real = sorted(
+    str(p.relative_to(d))
+    for p in d.rglob("*")
+    if p.is_file() and p.name != man.name and not p.name.startswith(".")
+)
+print("OK" if declared == real else f"声明 {declared} ≠ 实际 {real}")
+PY
+)"
+  check "包：${kind}/${want} 清单与目录一致" "OK" "${MISSING}"
+
+  ZIP="${TMP:-/tmp}/bundle-${want}.zip"
+  mkdir -p "$(dirname "${ZIP}")"
+  OUT="$("${PLATFORM_CLI}" skill pack "${dir}" --kind "${kind}" --out "${ZIP}" 2>&1)"
+  check "包：${want} 能打包（清单校验通过）" "已打包" "${OUT}"
+  if command -v unzip >/dev/null 2>&1; then
+    check "包：${want} 系统 unzip 能读（第三方验收）" "No errors detected" \
+      "$(unzip -t "${ZIP}" 2>&1 | tail -1)"
+  else
+    skip "包：${want} 第三方验收" "本机没有 unzip"
+  fi
+}
+
+selfcheck_bundle "${ROOT}/skills/rsi3d-harness" "skill" "rsi3d-harness"
+selfcheck_bundle "${ROOT}/plugins/harness-use" "plugin" "harness-use-rsi3d"
+
+# 插件是「源码贡献」给 harness-use 的：能对得上宿主时顺手验一下锚点（宿主不在就跳过）
+# 宿主是另一个仓库：只在显式给了路径时才验（公开仓库里不该写死本机路径）
+HOST_AGENT="${RSI3D_HARNESSUSE_AGENT:-}"
+if [ -n "${HOST_AGENT}" ] && [ -d "${HOST_AGENT}/src" ]; then
+  OUT="$(bash "${ROOT}/plugins/harness-use/integrate.sh" "${HOST_AGENT}" --check 2>&1 || true)"
+  check "包：插件接入脚本对得上宿主锚点（--check 不改文件）" "锚点齐全" "${OUT}"
+else
+  skip "包：插件接入脚本对宿主锚点" "没设 RSI3D_HARNESSUSE_AGENT（宿主是另一个仓库）"
+fi
+
 # ---------------------------------------------------------------- 结果
 
 echo
@@ -443,4 +745,4 @@ echo "── 结果：通过 ${PASS} · 失败 ${FAIL} · 跳过 ${SKIP} ──�
 if [ "${FAIL}" -gt 0 ]; then
   exit 1
 fi
-echo "✓ rsi3d-harness 冒烟全部通过（脚手架 + 场景内核 + MCP + 渲染 + 转流 + npm）"
+echo "✓ rsi3d-harness 冒烟全部通过（脚手架 + 场景内核 + MCP + 渲染 + 转流 + 导出 + npm + 契约 + 导入 + 渲染模式 + 技能包）"

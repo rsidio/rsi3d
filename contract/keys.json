@@ -1,0 +1,1340 @@
+{
+  "blocks": {
+    "gltf_node_extras": {
+      "keys": {
+        "rsi3d": {
+          "keys": {
+            "aabb": {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "color": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "editability": {
+              "type": "string"
+            },
+            "geometry": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "layers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "material_name": {
+              "type": "string"
+            },
+            "mesh_ref": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "gltf_patch_changes": {
+      "keys": {
+        "blockers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "edit_count": {
+          "type": "integer"
+        },
+        "lights_remove": {
+          "items": {},
+          "type": "array"
+        },
+        "lights_upsert": {
+          "items": {
+            "keys": {
+              "intensity": {
+                "type": "number"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nodes_remove": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "nodes_upsert": {
+          "items": {
+            "keys": {
+              "extras": {
+                "keys": {
+                  "rsi3d": {
+                    "keys": {
+                      "aabb": {
+                        "items": {
+                          "items": {
+                            "type": "number"
+                          },
+                          "type": "array"
+                        },
+                        "type": "array"
+                      },
+                      "color": {
+                        "items": {
+                          "type": "integer"
+                        },
+                        "type": "array"
+                      },
+                      "editability": {
+                        "type": "string"
+                      },
+                      "geometry": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "layers": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "material_name": {
+                        "type": "string"
+                      },
+                      "mesh_ref": {
+                        "type": "string"
+                      },
+                      "role": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "material": {
+                "type": "integer"
+              },
+              "mesh": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "scale": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "translation": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "gltf_scene_extras": {
+      "keys": {
+        "rsi3d": {
+          "keys": {
+            "clearance_rules": {
+              "items": {
+                "keys": {
+                  "max": {
+                    "type": "number"
+                  },
+                  "min": {
+                    "type": "number"
+                  },
+                  "pair": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "geometry": {
+              "type": "string"
+            },
+            "intent": {
+              "type": "string"
+            },
+            "intent_keywords": {
+              "items": {
+                "keys": {
+                  "note": {
+                    "type": "string"
+                  },
+                  "present": {
+                    "type": "boolean"
+                  },
+                  "word": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "room": {
+              "keys": {
+                "ceiling": {
+                  "type": "number"
+                },
+                "size": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            "spec": {
+              "type": "string"
+            },
+            "units": {
+              "type": "string"
+            },
+            "up_axis": {
+              "type": "string"
+            },
+            "window": {
+              "keys": {
+                "bandDepth": {
+                  "type": "number"
+                },
+                "height": {
+                  "type": "number"
+                },
+                "spanX": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "wall": {
+                  "type": "string"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "type": "object"
+            },
+            "window_blockers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "host_profile": {
+      "keys": {
+        "agent": {
+          "type": "string"
+        },
+        "bench": {
+          "keys": {
+            "fillrate_mpx": {
+              "type": "number"
+            },
+            "frames": {
+              "type": "integer"
+            },
+            "ms": {
+              "type": "integer"
+            },
+            "sustained_fps": {
+              "type": "number"
+            },
+            "triangles_mps": {
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "cpu": {
+          "keys": {
+            "cores": {
+              "type": "integer"
+            },
+            "memory_gb": {
+              "type": "number"
+            },
+            "platform": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "display": {
+          "keys": {
+            "dpr": {
+              "type": "number"
+            },
+            "refresh_hz": {
+              "type": "integer"
+            },
+            "viewport": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "form": {
+          "type": "string"
+        },
+        "gpu": {
+          "keys": {
+            "api": {
+              "type": "string"
+            },
+            "max_texture": {
+              "type": "integer"
+            },
+            "renderer": {
+              "type": "string"
+            },
+            "renderer_hash": {
+              "type": "string"
+            },
+            "software": {
+              "type": "boolean"
+            },
+            "vendor_hash": {
+              "type": "string"
+            },
+            "webgpu": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "privacy": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "render_policy": {
+      "keys": {
+        "fallbacks": {
+          "items": {
+            "keys": {
+              "link": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "what": {
+                "type": "string"
+              },
+              "when_at_or_below": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "modes": {
+          "items": {
+            "keys": {
+              "allow_software": {
+                "type": "boolean"
+              },
+              "limits": {
+                "keys": {
+                  "allow_animation": {
+                    "type": "boolean"
+                  },
+                  "geometry": {
+                    "type": "string"
+                  },
+                  "max_fps": {
+                    "type": "integer"
+                  },
+                  "max_px": {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  "stream": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "min_cores": {
+                "type": "integer"
+              },
+              "min_max_texture": {
+                "type": "integer"
+              },
+              "min_sustained_fps": {
+                "type": "number"
+              },
+              "min_viewport": {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "require_gpu": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "note": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "render_verdict": {
+      "keys": {
+        "authority": {
+          "type": "string"
+        },
+        "fallbacks": {
+          "items": {
+            "keys": {
+              "link": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "what": {
+                "type": "string"
+              },
+              "when_at_or_below": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "limits": {
+          "keys": {
+            "allow_animation": {
+              "type": "boolean"
+            },
+            "geometry": {
+              "type": "string"
+            },
+            "max_fps": {
+              "type": "integer"
+            },
+            "max_px": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "stream": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "policy_version": {
+          "type": "string"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "scene": {
+      "keys": {
+        "clearance_rules": {
+          "items": {
+            "keys": {
+              "max": {
+                "type": "number"
+              },
+              "min": {
+                "type": "number"
+              },
+              "pair": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "coordinate_system": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "intent_keywords": {
+          "items": {
+            "keys": {
+              "note": {
+                "type": "string"
+              },
+              "present": {
+                "type": "boolean"
+              },
+              "word": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "lights": {
+          "items": {
+            "keys": {
+              "color": {
+                "type": "string"
+              },
+              "direction": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "id": {
+                "type": "string"
+              },
+              "intensity": {
+                "type": "number"
+              },
+              "kind": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "objects": {
+          "items": {
+            "keys": {
+              "aabb": {
+                "keys": {
+                  "max": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  "min": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "editability": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "layers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "material": {
+                "type": "string"
+              },
+              "material_params": {
+                "keys": {
+                  "metallic": {
+                    "type": "number"
+                  },
+                  "opacity": {
+                    "type": "number"
+                  },
+                  "roughness": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "metrics": {
+                "keys": {
+                  "triangles": {
+                    "type": "integer"
+                  },
+                  "watertight": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "provenance": {
+                "keys": {
+                  "created_at_rev": {
+                    "type": "integer"
+                  },
+                  "origin": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "source_coordinate_system": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "role": {
+                "type": "string"
+              },
+              "rsi3d": {
+                "keys": {
+                  "geometry": {
+                    "type": "string"
+                  },
+                  "mesh_ref": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "room": {
+          "keys": {
+            "ceiling": {
+              "type": "number"
+            },
+            "size": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "wallColor": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "source_coordinate_system": {
+          "type": "string"
+        },
+        "spec": {
+          "type": "string"
+        },
+        "units": {
+          "type": "string"
+        },
+        "up_axis": {
+          "type": "string"
+        },
+        "window": {
+          "keys": {
+            "bandDepth": {
+              "type": "number"
+            },
+            "height": {
+              "type": "number"
+            },
+            "spanX": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "wall": {
+              "type": "string"
+            },
+            "z": {
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "stream_client": {
+      "keys": {
+        "camera": {
+          "keys": {
+            "azimuth-deg": {
+              "type": "number"
+            },
+            "distance": {
+              "type": "number"
+            },
+            "elevation-deg": {
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "expect": {
+          "keys": {
+            "rule.violated": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "from_revision": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "integer"
+        },
+        "op": {
+          "type": "string"
+        },
+        "params": {
+          "keys": {
+            "translate": {
+              "items": {
+                "type": [
+                  "integer",
+                  "number"
+                ]
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "stream_server": {
+      "keys": {
+        "band_occlusion": {
+          "type": "number"
+        },
+        "camera": {
+          "keys": {
+            "azimuth-deg": {
+              "type": "number"
+            },
+            "distance": {
+              "type": "number"
+            },
+            "elevation-deg": {
+              "type": "number"
+            },
+            "preset": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "changes": {
+          "keys": {
+            "blockers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "edit_count": {
+              "type": "integer"
+            },
+            "lights_remove": {
+              "items": {},
+              "type": "array"
+            },
+            "lights_upsert": {
+              "items": {
+                "keys": {
+                  "intensity": {
+                    "type": "number"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "nodes_remove": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "nodes_upsert": {
+              "items": {
+                "keys": {
+                  "extras": {
+                    "keys": {
+                      "rsi3d": {
+                        "keys": {
+                          "aabb": {
+                            "items": {
+                              "items": {
+                                "type": "number"
+                              },
+                              "type": "array"
+                            },
+                            "type": "array"
+                          },
+                          "color": {
+                            "items": {
+                              "type": "integer"
+                            },
+                            "type": "array"
+                          },
+                          "editability": {
+                            "type": "string"
+                          },
+                          "geometry": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "layers": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "material_name": {
+                            "type": "string"
+                          },
+                          "mesh_ref": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "material": {
+                    "type": "integer"
+                  },
+                  "mesh": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "scale": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  "translation": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "client_agent": {
+          "type": "string"
+        },
+        "client_capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "client_render_tier": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "from": {
+          "type": "integer"
+        },
+        "geometry": {
+          "type": "string"
+        },
+        "gltf": {
+          "$opaque": "标准 glTF 2.0 文档：形状由 glTF 规范定义，我们只拥有其中的 extras.rsi3d（见 gltf_node_extras / gltf_scene_extras 块）",
+          "type": [
+            "object"
+          ]
+        },
+        "height": {
+          "type": "integer"
+        },
+        "image_hash": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "integer"
+        },
+        "png_base64": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "renderer": {
+          "type": "string"
+        },
+        "resumed": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "scene_hash": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        },
+        "server_version": {
+          "type": "string"
+        },
+        "to": {
+          "type": "integer"
+        },
+        "type": {
+          "type": "string"
+        },
+        "view": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "view": {
+      "keys": {
+        "blockers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "clearance_rules": {
+          "items": {
+            "keys": {
+              "max": {
+                "type": "number"
+              },
+              "min": {
+                "type": "number"
+              },
+              "pair": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "intent_keywords": {
+          "items": {
+            "keys": {
+              "note": {
+                "type": "string"
+              },
+              "present": {
+                "type": "boolean"
+              },
+              "word": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "lights": {
+          "items": {
+            "keys": {
+              "color": {
+                "type": "string"
+              },
+              "direction": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "id": {
+                "type": "string"
+              },
+              "intensity": {
+                "type": "number"
+              },
+              "kind": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "object_count": {
+          "type": "integer"
+        },
+        "objects": {
+          "items": {
+            "keys": {
+              "aabb": {
+                "keys": {
+                  "max": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  "min": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "editability": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "layers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "material": {
+                "type": "string"
+              },
+              "material_params": {
+                "keys": {
+                  "metallic": {
+                    "type": "number"
+                  },
+                  "opacity": {
+                    "type": "number"
+                  },
+                  "roughness": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "room": {
+          "keys": {
+            "ceiling": {
+              "type": "number"
+            },
+            "size": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "wallColor": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "solid_count": {
+          "type": "integer"
+        },
+        "spec": {
+          "type": "string"
+        },
+        "units": {
+          "type": "string"
+        },
+        "window": {
+          "keys": {
+            "bandDepth": {
+              "type": "number"
+            },
+            "height": {
+              "type": "number"
+            },
+            "spanX": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "wall": {
+              "type": "string"
+            },
+            "z": {
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "derived_from": [
+    "crates/core/src/scene.rs（Scene / Node / Window / Room / Light / ClearanceRule…）",
+    "crates/core/src/view.rs（SceneView：评测插件读的那份形状）",
+    "crates/stream/src/protocol.rs（ServerMessage / ClientMessage）",
+    "crates/stream/src/gltf.rs（extras.rsi3d 与增量载荷）"
+  ],
+  "enums": {
+    "client_capability": [
+      "scene",
+      "image",
+      "three",
+      "webgl2",
+      "webgl1",
+      "context-loss",
+      "headless"
+    ],
+    "client_capability_kind": {
+      "context-loss": "robustness",
+      "headless": "form",
+      "image": "consume",
+      "scene": "consume",
+      "three": "render",
+      "webgl1": "downlevel",
+      "webgl2": "render"
+    },
+    "client_capability_meaning": {
+      "context-loss": "会处理 GPU 上下文丢失/恢复，而不是假装没发生",
+      "headless": "没有屏幕（命令行/服务端消费者）",
+      "image": "能消费图像流（PNG 帧）",
+      "scene": "能消费场景流（glTF 快照 + 增量）",
+      "three": "有可用的 three.js 客户端渲染路径",
+      "webgl1": "只有 WebGL1——**降级档**：场景流还能看，但要按最低公分母来",
+      "webgl2": "本机有 WebGL2（客户端渲染的正常档）"
+    },
+    "client_capability_needs_any": {
+      "context-loss": [],
+      "headless": [],
+      "image": [],
+      "scene": [],
+      "three": [
+        "webgl2",
+        "webgl1"
+      ],
+      "webgl1": [],
+      "webgl2": []
+    },
+    "editability": [
+      "full",
+      "crop-only",
+      "replace-only"
+    ],
+    "frame_renderer": [
+      {
+        "evidence": true,
+        "meaning": "本引擎的 CPU 软件光栅：同状态必得同像素，可当证据",
+        "name": "cpu-raster/v1"
+      }
+    ],
+    "layer": [
+      "mesh",
+      "gaussian",
+      "points",
+      "light",
+      "camera"
+    ],
+    "note": "role 与 units 是自由字符串（内核用 RoleKind::parse 归类，不是闭集）；命令 op 名由内核的命令信封校验，这里不枚举",
+    "origin": [
+      "unknown",
+      "imported",
+      "generated",
+      "edited"
+    ],
+    "stream_client_message": [
+      "subscribe",
+      "set_camera",
+      "command",
+      "ping"
+    ],
+    "stream_kind": [
+      "scene",
+      "frame"
+    ],
+    "stream_server_message": [
+      "welcome",
+      "snapshot",
+      "patch",
+      "frame",
+      "pong",
+      "error",
+      "bye"
+    ]
+  },
+  "note": "这份清单**由 Rust 类型派生**（全字段样例用结构体字面量写，枚举用穷尽 match），不是手写的第二份真相。`keys` 里带点号的是嵌套路径，裸名的是任意层级的键。⚠️ Scene/Node/glTF 节点都带 serde flatten 的 extras：**拼错的键会被内核吞进 extras 而不报错**（例如把 bandDepth 写成 band_depth，窗带深度会悄悄回落默认值）——这正是这份清单要拦住的事。schema 不是权威，内核（Scene::from_json）才是。",
+  "present_in_both_rust_examples": {
+    "note": "内核给几乎每个字段都设了默认值，所以这里不是「必需键」，只是「我们自己的样例都带的键」",
+    "scene": [
+      "coordinate_system",
+      "objects",
+      "spec",
+      "units",
+      "up_axis"
+    ]
+  },
+  "spec": "rsi3d-contract/v1"
+}

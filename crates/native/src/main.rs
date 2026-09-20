@@ -16,6 +16,9 @@ use rsi3d_harness_scaffold as scaffold;
 // 换个名字，免得与 Rust 内置的 `core` 混淆。
 use rsi3d_harness_core as engine;
 use rsi3d_harness_render as render;
+use rsi3d_harness_stream as stream;
+use rsi3d_harness_contract as contract;
+use rsi3d_harness_io as io;
 use engine::{CommandRequest, Document};
 
 /// `serve` / `stream` 两个子命令（远程渲染 / 转流）。
@@ -34,8 +37,11 @@ mod serve_cmd;
         rsi3d-harness scene show scene.json\n  \
         rsi3d-harness scene edit scene.json --cmd '{\"op\":\"transform\",\"target\":\"sofa_01\",\"params\":{\"translate\":[0,0,1.3]},\"reason\":\"把沙发挪出窗带\"}'\n  \
         rsi3d-harness scene verify doc.json\n  \
+        rsi3d-harness scene export scene.json --out model.gltf（交给 Blender / Fyrox / three.js）\n  \
+  rsi3d-harness scene import robot.blend --out robot.scene.json（接进来：自己读 glTF/OBJ/STL，blend/fbx/usd 交给本机 Blender）\n  \
         rsi3d-harness serve scene.json --port 8283 --open（浏览器里两条流并排看）\n  \
         rsi3d-harness stream http://127.0.0.1:8283 --token <T> --kind frame --out frames/\n  \
+        rsi3d-harness contract --out contract（从 Rust 类型派生出给外部作者的键清单与 schema）\n  \
         rsi3d-harness mcp --root .（在 VS Code 里由 .vscode/mcp.json 启动）"
 )]
 struct Cli {
@@ -69,6 +75,24 @@ enum Cmd {
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
     },
+    /// 渲染模式：看规则表，或拿一份主机参数**判**这台机器该用什么档
+    RenderMode {
+        /// 主机参数（浏览器探测出来的那份 JSON；不给就只打印规则表）
+        #[arg(long, value_name = "FILE")]
+        profile: Option<PathBuf>,
+        /// 用指定的规则表（缺省用内置；平台发的那份可以从 `/api/render/policy` 存下来）
+        #[arg(long, value_name = "FILE")]
+        policy: Option<PathBuf>,
+    },
+    /// 契约：从 Rust 类型**派生**给非 Rust 消费者用的键清单 / JSON Schema（单一出处）
+    Contract {
+        /// 输出目录；不给就只打印（配合 `--json` 给工具消费）
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// 只比对不落盘：产物与来源不一致就报错（CI / 冒烟用）
+        #[arg(long)]
+        check: bool,
+    },
     /// 远程渲染 / 转流：把场景推成 three.js 场景流 + 图像流（HTTP + SSE）
     Serve {
         /// 场景或文档文件
@@ -88,6 +112,9 @@ enum Cmd {
         /// 启动后用浏览器打开客户端页（macOS `open`）
         #[arg(long)]
         open: bool,
+        /// 判定用的规则表（缺省用内置；平台发的那份可从 `/api/render/policy` 存下来）
+        #[arg(long, value_name = "FILE")]
+        policy: Option<PathBuf>,
     },
     /// 客户端：订阅远端流并落盘（帧存 PNG、快照导出 glTF）
     Stream {
@@ -163,6 +190,39 @@ enum SceneCmd {
         width: u32,
         #[arg(long, default_value_t = 360)]
         height: u32,
+    },
+    /// 导出：把当前状态交给**外部工具链**（标准 glTF 2.0，可直接给 Blender / Fyrox / three.js）
+    Export {        /// 场景或文档文件
+        file: PathBuf,
+        /// 输出文件；缺省用 <输入名>.gltf
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+        /// 格式；目前只支持 gltf
+        #[arg(long, default_value = "gltf")]
+        format: String,
+    },
+    /// 导入：把外部资产（gltf/glb/obj/stl 自己读；blend/fbx/usd 请 Blender）接成场景
+    Import {
+        /// 源文件（没有这个参数时用 --formats 看支持哪些）
+        file: Option<PathBuf>,
+        /// 输出场景 JSON（缺省 <源文件名>.scene.json）；几何 side-car 写在它旁边
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+        /// 源文件的长度单位 → 米（CAD 常见毫米：给 0.001）
+        #[arg(long, default_value_t = 1.0)]
+        unit_scale: f64,
+        /// 最多导多少个对象（装配体可能上千件；截断会在报告里说明）
+        #[arg(long)]
+        limit: Option<usize>,
+        /// 指定 Blender 可执行文件（也可用 RSI3D_BLENDER）
+        #[arg(long, value_name = "PATH")]
+        blender: Option<PathBuf>,
+        /// 不写几何 side-car（只要 AABB 场景）
+        #[arg(long)]
+        no_mesh: bool,
+        /// 列出支持的格式与各自的路子
+        #[arg(long)]
+        formats: bool,
     },
 }
 
@@ -253,8 +313,33 @@ fn dispatch(cli: &Cli) -> Result<()> {
                 width,
                 height,
             } => cmd_scene_render(cli, file, out.as_deref(), views.as_deref(), *width, *height),
+            SceneCmd::Export { file, out, format } => {
+                cmd_scene_export(cli, file, out.as_deref(), format)
+            }
+            SceneCmd::Import {
+                file,
+                out,
+                unit_scale,
+                limit,
+                blender,
+                no_mesh,
+                formats,
+            } => cmd_scene_import(
+                cli,
+                file.as_deref(),
+                out.as_deref(),
+                *unit_scale,
+                *limit,
+                blender.as_deref(),
+                *no_mesh,
+                *formats,
+            ),
         },
         Cmd::Mcp { root } => cmd_mcp(root.as_deref()),
+        Cmd::RenderMode { profile, policy } => {
+            cmd_render_mode(cli, profile.as_deref(), policy.as_deref())
+        }
+        Cmd::Contract { out, check } => cmd_contract(cli, out.as_deref(), *check),
         Cmd::Serve {
             file,
             bind,
@@ -262,7 +347,17 @@ fn dispatch(cli: &Cli) -> Result<()> {
             fps,
             token,
             open,
-        } => serve_cmd::cmd_serve(cli, file, bind, *port, *fps, token.as_deref(), *open),
+            policy,
+        } => serve_cmd::cmd_serve(
+            cli,
+            file,
+            bind,
+            *port,
+            *fps,
+            token.as_deref(),
+            *open,
+            policy.as_deref(),
+        ),
         Cmd::Stream {
             url,
             token,
@@ -678,6 +773,354 @@ fn cmd_scene_edit(
     value["out"] = serde_json::json!(out.map(|p| p.display().to_string()));
     emit(cli, lines.join("\n"), value)
 }
+
+/// 导出成**外部工具链能直接打开**的标准格式。
+///
+/// 为什么只做 glTF：那是唯一一个「我们不用交出发格式主权、对方不用装我们的东西」的交集。
+/// 外部引擎（Blender / Fyrox / three.js / Unity…）都读 glTF；我们的自有信息放在
+/// `extras.rsi3d`（**glTF 规范允许忽略 unknown extras**，所以不会污染别人的加载器）。
+///
+/// 这也是本工程与外部 3D 引擎的**唯一**对接方式：**格式级**，不是代码级。
+fn cmd_scene_export(cli: &Cli, file: &Path, out: Option<&Path>, format: &str) -> Result<()> {
+    if !format.eq_ignore_ascii_case("gltf") {
+        bail!(
+            "不支持的导出格式「{}」；目前只有 gltf。标准 glTF 2.0 已经覆盖 \
+             Blender / FyroxEd / three.js / Unity 的导入路径，\
+             其它格式（USDZ / SPZ / 引擎自有格式）等有真实需求再接。",
+            format
+        );
+    }
+    let doc = load_document(file)?;
+    let gltf = stream::gltf::scene_to_gltf(doc.scene());
+    let body = serde_json::to_string_pretty(&gltf)?;
+
+    let target = match out {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let stem = file
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "scene".into());
+            let name = format!("{}.gltf", stem);
+            match file.parent() {
+                Some(p) if !p.as_os_str().is_empty() => p.join(name),
+                _ => PathBuf::from(name),
+            }
+        }
+    };
+    std::fs::write(&target, &body)
+        .with_context(|| format!("写不到 {}", target.display()))?;
+
+    let nodes = gltf
+        .get("nodes")
+        .and_then(|n| n.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let lights = gltf
+        .pointer("/extensions/KHR_lights_punctual/lights")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+    let mut human = String::new();
+    human.push_str(&format!("✓ 已导出 {}\n", target.display()));
+    human.push_str(&format!(
+        "  格式        glTF 2.0（单文件，几何数据内嵌为 base64 data URI）\n"
+    ));
+    human.push_str(&format!("  节点 {} · 灯光 {}\n", nodes, lights));
+    human.push_str(&format!(
+        "  几何档次    {}（H0 还没有真网格，节点是包围盒代理；`io` 落地后才是真几何）\n",
+        stream::GEOMETRY_AABB_PROXY
+    ));
+    human.push_str(&format!(
+        "  自有信息    extras.rsi3d（role/材质/可编辑性/房间/窗/规则，外部加载器会按规范忽略）\n"
+    ));
+    human.push_str(&format!(
+        "  版本        rev {} · 场景哈希 {}\n",
+        doc.revision(),
+        &doc.scene_hash()?[..8]
+    ));
+    human.push_str("\n这个文件可以直接给外部工具链：\n");
+    human.push_str("  three.js   GLTFLoader.parse(json)\n");
+    human.push_str("  Blender    导入 → glTF 2.0 (.gltf)\n");
+    human.push_str("  Fyrox      FyroxEd 打开 glTF（详见 prd 里的评估）\n");
+
+    let value = serde_json::json!({
+        "ok": true,
+        "out": target.display().to_string(),
+        "bytes": body.len(),
+        "format": "gltf",
+        "gltf_version": "2.0",
+        "nodes": nodes,
+        "lights": lights,
+        "geometry": stream::GEOMETRY_AABB_PROXY,
+        "revision": doc.revision(),
+        "scene_hash": doc.scene_hash()?,
+    });
+    emit(cli, human, value)
+}
+
+/// `contract`：把「非 Rust 消费者要遵守的形状」从 Rust 类型**派生**出来。
+///
+/// 这里**不手写第二份真相**：键清单与 JSON Schema 从序列化结果产出，枚举从穷尽 `match`
+/// 产出。字段改名、加枚举变体都会让 **crate 编译不过**（见 `crates/contract/src/lib.rs`）。
+/// 落盘的产物只是缓存，测试断言「重新生成 == 已提交」。
+fn cmd_contract(cli: &Cli, out: Option<&Path>, check: bool) -> Result<()> {
+    let arts = contract::artifacts();
+    let known: Vec<(&str, usize)> = BLOCKS
+        .iter()
+        .map(|b| (*b, contract::known_keys(b).len()))
+        .collect();
+
+    if check {
+        let dir = out.unwrap_or(Path::new("contract"));
+        let mut stale = Vec::new();
+        for (name, body) in &arts {
+            let p = dir.join(name);
+            match std::fs::read_to_string(&p) {
+                Ok(cur) if cur == *body => {}
+                Ok(_) => stale.push(format!("{} 与 Rust 类型不一致", p.display())),
+                Err(_) => stale.push(format!("{} 不存在", p.display())),
+            }
+        }
+        if !stale.is_empty() {
+            bail!(
+                "契约产物已过期：{}\n重新生成：rsi3d-harness contract --out {}",
+                stale.join("；"),
+                dir.display()
+            );
+        }
+        return emit(
+            cli,
+            format!("✓ 契约产物与 Rust 类型一致（{} 个文件）", arts.len()),
+            serde_json::json!({"ok": true, "files": arts.len(), "dir": dir.display().to_string()}),
+        );
+    }
+
+    if let Some(dir) = out {
+        let written = contract::write_all(dir).map_err(anyhow::Error::msg)?;
+        let human = format!(
+            "✓ 写出 {} 个契约产物到 {}\n{}",
+            written.len(),
+            dir.display(),
+            written
+                .iter()
+                .map(|p| format!("  {}", p.display()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let value = serde_json::json!({
+            "ok": true,
+            "out": dir.display().to_string(),
+            "files": written.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+            "known_keys": known.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
+        });
+        return emit(cli, human, value);
+    }
+
+    // 只打印（`--json` 时给出全部产物内容，方便工具直接吃）
+    let human = format!(
+        "契约产物（派生自 Rust 类型，勿手改）\n{}\n已知键（含嵌套路径与裸名）：{}\n注：stream_server 里 Snapshot.gltf 内嵌的是标准 glTF 2.0 文档，键树不展开\n重新生成：rsi3d-harness contract --out contract",
+        arts.iter()
+            .map(|(name, body)| format!("  {:<20} {:>6} B", name, body.len()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        known
+            .iter()
+            .map(|(b, n)| format!("{} {}", b, n))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    );
+    let value = serde_json::json!({
+        "ok": true,
+        "artifacts": arts
+            .iter()
+            .map(|(name, body)| {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+                (name.to_string(), parsed)
+            })
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
+        "known_keys": known.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
+    });
+    emit(cli, human, value)
+}
+
+/// `scene import`：把外部资产接成我们的场景。
+///
+/// 报告里说清四件事：**谁解析的**（自己读 / 经谁的手）、**多少东西**（对象/顶点/三角面）、
+/// **多大**（包围盒，米）、**几何在哪**（side-car 文件名）。任何截断与可疑单位都写进 warnings
+/// ——导入器最忌讳的就是"看起来成功了"。
+#[allow(clippy::too_many_arguments)]
+fn cmd_scene_import(
+    cli: &Cli,
+    file: Option<&Path>,
+    out: Option<&Path>,
+    unit_scale: f64,
+    limit: Option<usize>,
+    blender: Option<&Path>,
+    no_mesh: bool,
+    formats: bool,
+) -> Result<()> {
+    if formats || file.is_none() {
+        let table = io::formats_json();
+        let human = io::FORMATS
+            .iter()
+            .map(|f| {
+                let route = match f.route {
+                    io::Route::Native => "自己读",
+                    io::Route::Blender => "经 Blender",
+                    io::Route::ExportUpstream => "请上游导出网格",
+                };
+                format!("  {:<6} {:<16} {}", f.ext, route, f.note)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let human = format!(
+            "支持的格式（三条路，分得清清楚楚）\n{}\n\n用法：rsi3d-harness scene import <文件> [--out 场景.json] \
+             [--unit-scale 0.001] [--limit N] [--blender PATH]",
+            human
+        );
+        return emit(cli, human, table);
+    }
+    let file = file.expect("上面已经判过");
+
+    // 输出场景 + 几何 side-car（放在同一个目录、同名前缀：服务端零配置就能找到）
+    let out_path = match out {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let stem = file
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "imported".into());
+            let dir = file.parent().unwrap_or(Path::new("."));
+            dir.join(format!("{}.scene.json", stem))
+        }
+    };
+    let sidecar = if no_mesh {
+        None
+    } else {
+        let stem = out_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "scene".into());
+        Some(out_path.with_file_name(format!("{}.mesh.glb", stem)))
+    };
+
+    let opts = io::ImportOptions {
+        unit_scale,
+        limit,
+        blender: blender.map(|p| p.to_path_buf()),
+        sidecar,
+        role: "other".into(),
+    };
+    let imported = io::import(file, &opts).map_err(anyhow::Error::msg)?;
+
+    // 落盘：场景 JSON。顺手用**内核**校验一遍——导入器不许产出内核读不了的东西
+    let text = serde_json::to_string_pretty(&imported.scene)?;
+    if let Err(e) = engine::Scene::from_json(&text) {
+        bail!("导入器产出的场景内核读不了（这是我们的 bug）：{e}");
+    }
+    std::fs::write(&out_path, format!("{text}\n"))
+        .with_context(|| format!("写不到 {}", out_path.display()))?;
+
+    let human = format!(
+        "{}\n  → 场景写到 {}\n下一步：\n  rsi3d-harness scene render {} --out /tmp/view\n  rsi3d-harness serve {}",
+        imported.report.text().trim_end(),
+        out_path.display(),
+        out_path.display(),
+        out_path.display()
+    );
+    let mut value = imported.report.json();
+    value["out"] = serde_json::json!(out_path.display().to_string());
+    emit(cli, human, value)
+}
+
+/// `render-mode`：规则表 + 判定。
+///
+/// 两个用途：① 不带 `--profile` 时把规则表打出来（"什么档要什么"，可对账）；
+/// ② 带 `--profile` 时判一份主机参数——**这就是离线那条路**（联网时浏览器直接问
+/// rsi3d.com，判定权威是平台）。
+fn cmd_render_mode(cli: &Cli, profile: Option<&Path>, policy: Option<&Path>) -> Result<()> {
+    use rsi3d_harness_stream::render_mode::{
+        assess, default_policy, explain, mode_rank, HostProfile, RenderPolicy,
+    };
+
+    let policy: RenderPolicy = match policy {
+        Some(p) => {
+            let text = std::fs::read_to_string(p)
+                .with_context(|| format!("读不到规则表 {}", p.display()))?;
+            serde_json::from_str(&text)
+                .with_context(|| format!("{} 不是合法的规则表", p.display()))?
+        }
+        None => default_policy(),
+    };
+
+    let Some(file) = profile else {
+        // 只打印规则表：每一档要什么、给什么限制
+        let human = format!(
+            "渲染模式规则表（版本 {}）\n{}\n\n{}\n\n改判定松紧 = 改这份表；平台发的是同一份（`/api/render/policy`）。",
+            policy.version,
+            policy.note,
+            policy
+                .modes
+                .iter()
+                .map(|m| {
+                    let mut req = Vec::new();
+                    if !m.require_gpu.is_empty() {
+                        req.push(format!("GPU {}", m.require_gpu.join("/")));
+                    }
+                    if m.min_cores > 0 {
+                        req.push(format!("≥{} 核", m.min_cores));
+                    }
+                    if m.min_sustained_fps > 0.0 {
+                        req.push(format!("持续 ≥{:.0} fps", m.min_sustained_fps));
+                    }
+                    if m.min_max_texture > 0 {
+                        req.push(format!("最大纹理 ≥{}", m.min_max_texture));
+                    }
+                    if m.min_viewport != (0, 0) {
+                        req.push(format!("视口 ≥{}×{}", m.min_viewport.0, m.min_viewport.1));
+                    }
+                    if !m.allow_software {
+                        req.push("要硬件加速".into());
+                    }
+                    format!(
+                        "  {:<15} 要：{:<52} 给：≤{}×{} · ≤{} fps · 几何 {} · 流 {}",
+                        m.mode,
+                        if req.is_empty() { "无（兜底档）".into() } else { req.join(" · ") },
+                        m.limits.max_px.0,
+                        m.limits.max_px.1,
+                        m.limits.max_fps,
+                        m.limits.geometry,
+                        m.limits.stream
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        return emit(cli, human, serde_json::to_value(&policy)?);
+    };
+
+    let text =
+        std::fs::read_to_string(file).with_context(|| format!("读不到 {}", file.display()))?;
+    let profile: HostProfile = serde_json::from_str(&text)
+        .with_context(|| format!("{} 不是合法的主机参数（见 docs/render-mode.md）", file.display()))?;
+    let verdict = assess(&profile, &policy, "local");
+    let _ = mode_rank(&verdict.mode);
+    emit(cli, explain(&verdict), serde_json::to_value(&verdict)?)
+}
+
+/// 契约里的块名（与 `crates/contract` 保持一致）。
+const BLOCKS: [&str; 7] = [
+    "scene",
+    "view",
+    "stream_server",
+    "stream_client",
+    "gltf_node_extras",
+    "gltf_scene_extras",
+    "gltf_patch_changes",
+];
 
 fn cmd_scene_verify(cli: &Cli, file: &Path) -> Result<()> {
     // 加载时已经强制校验「重放 == 落盘状态」，这里再把其余可复现性证据摆出来。

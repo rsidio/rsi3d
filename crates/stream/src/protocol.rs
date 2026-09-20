@@ -92,6 +92,332 @@ impl Camera {
     }
 }
 
+/// 一条能力的**类别**。
+///
+/// 这个分类是抄 wgpu 的：它把一个适配器说清楚要三样东西——
+/// **features**（*"Features that are not guaranteed to be supported"*）、
+/// **limits**（数值上限）、**downlevel flags**（老后端缺了什么，
+/// `wgpu_hal` 里每个后端都存一份 `downlevel_flags`）。
+/// 我们原来把 `webgl1` 与 `webgl2` 当成两个并列的能力，其实它们是**同一件事的两个档位**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityKind {
+    /// 能消费哪条流
+    Consume,
+    /// 客户端渲染档位（越高越能干）
+    Render,
+    /// **降级档**：还能干活，但按最低公分母来（对应 wgpu 的 downlevel）
+    Downlevel,
+    /// 形态：有没有屏幕
+    Form,
+    /// 鲁棒性：坏情况处理得好不好
+    Robustness,
+}
+
+/// 一条能力的元数据（名字 / 含义 / 类别 / 依赖）。
+#[derive(Debug, Clone, Copy)]
+pub struct Capability {
+    pub name: &'static str,
+    pub meaning: &'static str,
+    pub kind: CapabilityKind,
+    /// 要它还得先有这些里的**任意一个**（空 = 无依赖）
+    pub needs_any: &'static [&'static str],
+}
+
+/// 客户端能力的**词汇表**（单一出处）。
+///
+/// 借 glow 的纪律：**能力是声明出来的，不是被假设的**（它把 `supported_extensions()`
+/// 放进 `HasContext` trait，于是每个后端都必须回答"你支持什么"）。我们原来只有服务端
+/// 声明自己（`Welcome.geometry`），客户端能干什么全靠猜——于是 CDN 被拦、GPU 上下文
+/// 丢失这类事在服务端**完全看不见**。
+///
+/// 名字在线上是**自由字符串**：不认识的原样记录（旧服务端 + 新客户端要能共存），
+/// 但绝不假装认识。
+///
+/// ⚠️ **不预先许诺**：词汇表里只放**真的有客户端在用**的名字。将来加 GPU/WebGPU 档时
+/// 再加 `webgpu`，而不是先把名字挂上去（wgpu 那条纪律的另一面：一个名字必须对应真实
+/// 行为，否则它就是在骗运维）。
+pub const KNOWN_CLIENT_CAPABILITIES: [Capability; 7] = [
+    Capability {
+        name: "scene",
+        meaning: "能消费场景流（glTF 快照 + 增量）",
+        kind: CapabilityKind::Consume,
+        needs_any: &[],
+    },
+    Capability {
+        name: "image",
+        meaning: "能消费图像流（PNG 帧）",
+        kind: CapabilityKind::Consume,
+        needs_any: &[],
+    },
+    Capability {
+        name: "three",
+        meaning: "有可用的 three.js 客户端渲染路径",
+        kind: CapabilityKind::Render,
+        // three.js 要有个 GL 上下文才画得出来；没有就是自相矛盾的声明
+        needs_any: &["webgl2", "webgl1"],
+    },
+    Capability {
+        name: "webgl2",
+        meaning: "本机有 WebGL2（客户端渲染的正常档）",
+        kind: CapabilityKind::Render,
+        needs_any: &[],
+    },
+    Capability {
+        name: "webgl1",
+        meaning: "只有 WebGL1——**降级档**：场景流还能看，但要按最低公分母来",
+        kind: CapabilityKind::Downlevel,
+        needs_any: &[],
+    },
+    Capability {
+        name: "context-loss",
+        meaning: "会处理 GPU 上下文丢失/恢复，而不是假装没发生",
+        kind: CapabilityKind::Robustness,
+        needs_any: &[],
+    },
+    Capability {
+        name: "headless",
+        meaning: "没有屏幕（命令行/服务端消费者）",
+        kind: CapabilityKind::Form,
+        needs_any: &[],
+    },
+];
+
+/// 帧尺寸的下限（像素）。再小就没有观测价值了。
+pub const MIN_FRAME_SIDE: u32 = 64;
+
+/// 本引擎的确定性软件光栅（**唯一能当证据的档**）。
+pub const RENDERER_CPU_RASTER: &str = "cpu-raster/v1";
+
+/// 帧来源档的**词汇表**：谁渲的、**能不能当证据**。
+///
+/// 为什么每一帧都要自报家门：我们的核心不变量是"**同状态必得同像素**"，所以才
+/// 敢把帧当作可对账的证据。而"帧"这个形态是可以被**别的东西**灌进来的：
+///
+/// - GPU 渲染档（跨驱动/跨设备的浮点与光栅化差异，做不到逐像素可复现）；
+/// - 从**别人的进程**里钩出来的画面（`veeenu/hudhook` 那种：注入 DLL + hook 人家
+///   的 `Present`）——那种帧跟我们的命令日志**没有任何关系**，既不可复现也无法归因。
+///
+/// 这些帧不是"坏"的，但**不能混进证据**。所以：一个档必须在此登记，且必须说清
+/// 它算不算证据；`scene verify` 那类验收只认 [`RENDERER_CPU_RASTER`]。
+///
+/// ⚠️ 这条表里**不允许**出现两个 `true`：证据档只能有一个（多了就说明有人想把
+/// 不可复现的东西也算成证据）。
+pub const FRAME_RENDERERS: [(&str, bool, &str); 1] = [(
+    RENDERER_CPU_RASTER,
+    true,
+    "本引擎的 CPU 软件光栅：同状态必得同像素，可当证据",
+)];
+
+/// 这个来源档能不能当证据？
+pub fn is_evidence_renderer(name: &str) -> bool {
+    FRAME_RENDERERS
+        .iter()
+        .any(|(n, evidence, _)| *n == name && *evidence)
+}
+
+/// 声明里的一处**说明**（不是错误：不拒连接，只是必须说出来）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclarationNote {
+    pub kind: NoteKind,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteKind {
+    /// 自相矛盾的声明（如 `webgl1` 与 `webgl2` 同时出现）
+    Contradiction,
+    /// 依赖没满足（如声明 `three` 却没有任何 GL 档位）
+    Unmet,
+    /// 能连上但干不了正事（如声明 `scene` 却没有渲染档）——**降级是合法状态**，
+    /// 只是必须让运维看得见
+    Degraded,
+}
+
+/// 客户端的自我声明：**谁连上来了、它能做什么**。
+///
+/// 为什么走**订阅 URL 的查询参数**而不是 `ClientMessage`：一条 SSE 连接就是一次订阅，
+/// 而 POST 通道（`/command`）与服务端**没有连接身份**可对——声明塞进 POST 就无法归属
+/// 到任何一条连接。查询参数是唯一天然带"连接身份"的位置。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientDeclaration {
+    /// 如 `rsi3d-web/0.1.0`、`rsi3d-cli/0.1.0`；不给就是 `unknown`
+    #[serde(default)]
+    pub agent: String,
+    /// 能力名（见 [`KNOWN_CLIENT_CAPABILITIES`]）
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// 客户端声明的**显示预算** `(宽, 高)`，来自 `?px=WxH`。
+    ///
+    /// 这是 wgpu 那套里的 **limits**：数值上限，而不是"有没有"。语义是**上限**——
+    /// 服务端只会往下调（等比缩放到这个框内），绝不会超过自己的默认档。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_budget: Option<(u32, u32)>,
+}
+
+impl ClientDeclaration {
+    /// 从查询参数解析（`?agent=…&cap=a,b,c&px=WxH`）。
+    pub fn from_query(mut get: impl FnMut(&str) -> Option<String>) -> Self {
+        let agent = get("agent").unwrap_or_default().trim().to_string();
+        let capabilities = get("cap")
+            .map(|raw| {
+                raw.split(',')
+                    .map(|c| c.trim().to_string())
+                    .filter(|c| !c.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        ClientDeclaration {
+            agent: if agent.is_empty() {
+                "unknown".to_string()
+            } else {
+                agent
+            },
+            capabilities,
+            frame_budget: get("px").as_deref().and_then(parse_px),
+        }
+    }
+
+    /// 有没有这条能力。
+    pub fn has(&self, name: &str) -> bool {
+        self.capabilities.iter().any(|c| c == name)
+    }
+
+    /// 我们不认识的能力名（**如实报出来，而不是默默丢掉**）。
+    pub fn unknown(&self) -> Vec<&str> {
+        self.capabilities
+            .iter()
+            .filter(|c| !KNOWN_CLIENT_CAPABILITIES.iter().any(|k| k.name == *c))
+            .map(|c| c.as_str())
+            .collect()
+    }
+
+    /// **派生的渲染档位**：一句话说清这个客户端到底能画到什么程度。
+    ///
+    /// 为什么不让人自己拼字符串：`/healthz` 里罗列十个标志，运维得自己推结论。
+    /// wgpu 也是这样——`Adapter::get_info()` + `get_downlevel_capabilities()` 给的是
+    /// **可读的结论**，而不是一串原始位。
+    pub fn render_tier(&self) -> &'static str {
+        let gl = self.has("webgl2") || self.has("webgl1");
+        if self.has("three") && gl {
+            "three"
+        } else if self.has("webgl2") {
+            "webgl2"
+        } else if self.has("webgl1") {
+            "webgl1-downlevel"
+        } else if self.has("headless") {
+            // 没有屏幕就直说"headless"——比"只能看帧"准确（它连帧都不看，是落盘的）
+            "headless"
+        } else if self.has("image") {
+            "frame-only" // 有屏幕但只能看服务端渲染的帧
+        } else {
+            "unknown"
+        }
+    }
+
+    /// 声明里的问题与降级说明（**不拒连接**——旧服务端+新客户端要能共存；
+    /// 但 wgpu 那条"越界即报"的精神在这里体现为：必须说出来）。
+    pub fn notes(&self) -> Vec<DeclarationNote> {
+        let mut out = Vec::new();
+
+        // ① 自相矛盾：两个 GL 档位同时声明（同一件事只能有一个档）
+        if self.has("webgl1") && self.has("webgl2") {
+            out.push(DeclarationNote {
+                kind: NoteKind::Contradiction,
+                text: "同时声明了 webgl1 与 webgl2（同一件事只能有一个档）".to_string(),
+            });
+        }
+
+        // ② 依赖没满足：wgpu 用 `MissingFeatures` 在**建设备时**就报错；我们只报不拒
+        for cap in KNOWN_CLIENT_CAPABILITIES.iter() {
+            if cap.needs_any.is_empty() || !self.has(cap.name) {
+                continue;
+            }
+            if !cap.needs_any.iter().any(|n| self.has(n)) {
+                out.push(DeclarationNote {
+                    kind: NoteKind::Unmet,
+                    text: format!(
+                        "声明了 {} 但没有 {}（依赖没满足）",
+                        cap.name,
+                        cap.needs_any.join(" / ")
+                    ),
+                });
+            }
+        }
+
+        // ③ 降级：能连、但干不了正事。**这是合法状态**（CDN 被拦就是这个样子），
+        //    所以才更要让运维看得见，而不是静悄悄
+        if self.has("scene") && !self.has("three") && !self.has("headless") && !self.has("image") {
+            out.push(DeclarationNote {
+                kind: NoteKind::Degraded,
+                text: "声明了 scene 但没有任何渲染档（场景流收得到、画不出来）".to_string(),
+            });
+        }
+
+        out
+    }
+
+    /// 实际要渲多大：把服务端默认尺寸**等比缩放到客户端的显示预算内**（只缩不放），
+    /// 并保证至少 [`MIN_FRAME_SIDE`] 宽（再小就没有观测价值）。
+    pub fn frame_size(&self, default: (u32, u32)) -> (u32, u32) {
+        let (dw, dh) = (default.0.max(1), default.1.max(1));
+        let Some((bw, bh)) = self.frame_budget else {
+            return (dw, dh);
+        };
+        if bw == 0 || bh == 0 {
+            return (dw, dh);
+        }
+        // 只缩不放 + 不低于下限（下限也按同一个比例缩放，避免把画面拉变形）
+        let floor_scale = MIN_FRAME_SIDE as f64 / dw as f64;
+        let scale = (bw as f64 / dw as f64)
+            .min(bh as f64 / dh as f64)
+            .clamp(0.0, 1.0)
+            .max(floor_scale);
+        (
+            ((dw as f64 * scale).round() as u32).max(MIN_FRAME_SIDE),
+            ((dh as f64 * scale).round() as u32).max(1),
+        )
+    }
+
+    /// 供日志/展示的一行摘要。
+    pub fn summary(&self) -> String {
+        let caps = if self.capabilities.is_empty() {
+            "（未声明能力）".to_string()
+        } else {
+            self.capabilities.join(" · ")
+        };
+        let unknown = self.unknown();
+        let px = match self.frame_budget {
+            Some((w, h)) => format!(" {}x{}", w, h),
+            None => String::new(),
+        };
+        if unknown.is_empty() {
+            format!("{} [{}]{}", self.agent, caps, px)
+        } else {
+            format!(
+                "{} [{}]{}（不认识：{}）",
+                self.agent,
+                caps,
+                px,
+                unknown.join(",")
+            )
+        }
+    }
+}
+
+/// 解析 `?px=WxH`（允许 `*`/`x`/`X` 分隔；给不合法的东西就当没声明）。
+pub fn parse_px(raw: &str) -> Option<(u32, u32)> {
+    let (w, h) = raw
+        .split_once(['x', 'X', '*'])
+        .map(|(a, b)| (a.trim(), b.trim()))?;
+    let w: u32 = w.parse().ok()?;
+    let h: u32 = h.parse().ok()?;
+    // 0 或过大都是没意义的输入：不受理（当作没声明），而不是静默改成别的数
+    if w == 0 || h == 0 || w > 16_384 || h > 16_384 {
+        return None;
+    }
+    Some((w, h))
+}
+
 /// 上行请求（POST body）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -141,6 +467,17 @@ pub enum ServerMessage {
         geometry: String,
         /// 订阅是否从 `from_revision` 续上了；没续上就发了全量
         resumed: bool,
+        /// 服务端**记录到的**客户端身份（回声：客户端据此确认服务端真的听到了）
+        #[serde(default)]
+        client_agent: String,
+        /// 服务端记录到的客户端能力（不认识的原样带上，不丢）
+        #[serde(default)]
+        client_capabilities: Vec<String>,
+        /// 服务端**派生出的**渲染档位（见 `ClientDeclaration::render_tier`）。
+        /// 回声这个的理由与上面一样：不靠默契，靠对账——客户端能直接看出
+        /// "服务端理解的我是几档"。
+        #[serde(default)]
+        client_render_tier: String,
     },
     /// 全量场景（glTF 2.0 JSON）。客户端拿它建场景。
     Snapshot {
@@ -162,6 +499,11 @@ pub enum ServerMessage {
         view: String,
         width: u32,
         height: u32,
+        /// 这一帧是谁渲的（见 [`FRAME_RENDERERS`]）。
+        ///
+        /// **证据档必须自报家门**：客户端与验收脚本据此判断这帧能不能当证据——
+        /// GPU 档、或从别人进程里钩出来的画面，都不得冒充 [`RENDERER_CPU_RASTER`]。
+        renderer: String,
         /// 原始像素的 sha256——客户端可以据此判断"这帧我真的没见过"
         image_hash: String,
         /// base64 PNG（`data:image/png;base64,...` 可直接塞进 img.src）
@@ -300,6 +642,7 @@ mod tests {
             view: "top".into(),
             width: 1,
             height: 1,
+            renderer: RENDERER_CPU_RASTER.into(),
             image_hash: "h".into(),
             png_base64: "x".into(),
             band_occlusion: None,
@@ -355,5 +698,164 @@ mod tests {
         assert_eq!(query_get(q, "kind").unwrap(), "scene");
         assert_eq!(query_get(q, "note").unwrap(), "a b");
         assert!(query_get(q, "missing").is_none());
+    }
+
+    #[test]
+    fn client_declaration_is_parsed_and_defaults_honestly() {
+        let q = "token=t&agent=rsi3d-web%2F0.1.0&cap=webgl2,three,thinking-machine";
+        let c = ClientDeclaration::from_query(|k| query_get(q, k));
+        assert_eq!(c.agent, "rsi3d-web/0.1.0");
+        assert_eq!(c.capabilities, vec!["webgl2", "three", "thinking-machine"]);
+        // 不认识的**原样留着**（旧服务端+新客户端要能共存），但要能如实报出来
+        assert_eq!(c.unknown(), vec!["thinking-machine"]);
+        assert!(c.summary().contains("thinking-machine"));
+
+        // 什么都不给：agent 是 unknown（不编造），能力为空（不是"全能"）
+        let bare = ClientDeclaration::from_query(|_| None);
+        assert_eq!(bare.agent, "unknown");
+        assert!(bare.capabilities.is_empty());
+        assert!(bare.unknown().is_empty());
+
+        // 空项/多余逗号不该变成"空能力名"
+        let messy = ClientDeclaration::from_query(|k| match k {
+            "cap" => Some(" , webgl1 ,, ".to_string()),
+            _ => None,
+        });
+        assert_eq!(messy.capabilities, vec!["webgl1"]);
+    }
+
+    #[test]
+    fn capability_vocabulary_is_documented_and_unique() {
+        // 词汇表是契约：每个名字都要有一句话解释，且不能重名
+        let mut names: Vec<&str> = KNOWN_CLIENT_CAPABILITIES.iter().map(|c| c.name).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "能力名不能重复");
+        for cap in KNOWN_CLIENT_CAPABILITIES {
+            assert!(!cap.name.trim().is_empty());
+            assert!(cap.meaning.len() > 4, "{} 缺少解释", cap.name);
+            // 依赖必须指向**真实存在**的能力名（否则就是在要求一个不存在的东西）
+            for need in cap.needs_any {
+                assert!(
+                    KNOWN_CLIENT_CAPABILITIES.iter().any(|c| c.name == *need),
+                    "{} 依赖了不存在的 {}",
+                    cap.name,
+                    need
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn render_tier_is_derived_not_parsed_by_the_operator() {
+        let mk = |caps: &[&str]| ClientDeclaration {
+            agent: "t".into(),
+            capabilities: caps.iter().map(|s| s.to_string()).collect(),
+            frame_budget: None,
+        };
+        // 全套 → three 档
+        assert_eq!(
+            mk(&["webgl2", "three", "scene", "image"]).render_tier(),
+            "three"
+        );
+        // three 没了（CDN 被拦的那一版声明）→ 降回 webgl2
+        assert_eq!(mk(&["webgl2", "scene", "image"]).render_tier(), "webgl2");
+        assert_eq!(mk(&["webgl1"]).render_tier(), "webgl1-downlevel");
+        // 只有图像流 → 只能看服务端渲的帧
+        assert_eq!(mk(&["image"]).render_tier(), "frame-only");
+        assert_eq!(mk(&["headless", "scene"]).render_tier(), "headless");
+        // 命令行客户端：没屏幕，就算它能收帧也还是 headless（它不看，它落盘）
+        assert_eq!(mk(&["headless", "image"]).render_tier(), "headless");
+        assert_eq!(mk(&[]).render_tier(), "unknown");
+    }
+
+    #[test]
+    fn notes_separate_contradictions_from_honest_degradation() {
+        let mk = |caps: &[&str]| ClientDeclaration {
+            agent: "t".into(),
+            capabilities: caps.iter().map(|s| s.to_string()).collect(),
+            frame_budget: None,
+        };
+
+        // 自相矛盾：同一件事声明了两个档
+        let notes = mk(&["webgl1", "webgl2"]).notes();
+        assert_eq!(notes[0].kind, NoteKind::Contradiction);
+
+        // 依赖没满足：three 要有 GL 上下文
+        let notes = mk(&["three", "scene"]).notes();
+        assert!(notes.iter().any(|n| n.kind == NoteKind::Unmet), "{:?}", notes);
+
+        // 降级是**合法状态**（实测：three.js 没加载出来时就是这个样子），但要记下来
+        let degraded = mk(&["webgl2", "scene"]).notes();
+        assert!(degraded.iter().any(|n| n.kind == NoteKind::Degraded));
+        // 命令行客户端（headless + scene）不算降级——它本来就不画
+        assert!(mk(&["headless", "scene"]).notes().is_empty());
+        // 全须全尾的客户端：一点问题都没有
+        assert!(mk(&["webgl2", "three", "scene", "image", "context-loss"])
+            .notes()
+            .is_empty());
+    }
+
+    #[test]
+    fn frame_budget_only_shrinks_and_keeps_the_aspect() {
+        let with_px = |px: &str| ClientDeclaration {
+            agent: "t".into(),
+            capabilities: vec![],
+            frame_budget: parse_px(px),
+        };
+        let default = (480, 360);
+
+        // 没声明 → 用服务端默认档
+        assert_eq!(with_px("").frame_size(default), default);
+        // 声明得比默认大 → **不放**（客户端报的是上限，不是点菜）
+        assert_eq!(with_px("1920x1080").frame_size(default), default);
+        // 等比缩到框内
+        assert_eq!(with_px("240x180").frame_size(default), (240, 180));
+        assert_eq!(with_px("240x9999").frame_size(default), (240, 180));
+        assert_eq!(with_px("9999x180").frame_size(default), (240, 180));
+        // 小到没意义 → 抬到下限，且**不变形**（仍是 4:3）
+        let (w, h) = with_px("10x10").frame_size(default);
+        assert_eq!(w, MIN_FRAME_SIDE);
+        assert_eq!(h, MIN_FRAME_SIDE * 3 / 4);
+        // 垃圾输入当作没声明
+        assert_eq!(parse_px("abc"), None);
+        assert_eq!(parse_px("0x100"), None);
+        assert_eq!(parse_px("99999x99999"), None);
+        assert_eq!(parse_px("800*600"), Some((800, 600)));
+        assert_eq!(parse_px("1024X768"), Some((1024, 768)));
+    }
+
+    #[test]
+    fn evidence_grade_renderers_are_unique_and_declared() {
+        // 证据档只能有一个：多了就说明有人想把不可复现的东西也算成证据
+        let evidence: Vec<&str> = FRAME_RENDERERS
+            .iter()
+            .filter(|(_, e, _)| *e)
+            .map(|(n, _, _)| *n)
+            .collect();
+        assert_eq!(evidence, vec![RENDERER_CPU_RASTER], "{:?}", evidence);
+
+        // 每个档都得说清自己是什么
+        for (name, _, meaning) in FRAME_RENDERERS {
+            assert!(name.contains('/'), "{} 应当带版本号（档是会变的）", name);
+            assert!(meaning.len() > 8, "{} 没说清楚", name);
+        }
+
+        assert!(is_evidence_renderer(RENDERER_CPU_RASTER));
+        // 图上钩出来的、GPU 渲的：都不是证据（将来登进来时必须写 false）
+        assert!(!is_evidence_renderer("gpu/wgpu-0.1"));
+        assert!(!is_evidence_renderer("hooked/dx11-present"));
+        assert!(!is_evidence_renderer(""));
+    }
+
+    #[test]
+    fn the_declaration_is_parsed_from_the_subscribe_url() {
+        let q = "token=t&agent=rsi3d-web%2F0.1.0&cap=webgl2%2Cscene&px=240x180";
+        let d = ClientDeclaration::from_query(|k| query_get(q, k));
+        assert_eq!(d.agent, "rsi3d-web/0.1.0");
+        assert!(d.has("webgl2") && d.has("scene"));
+        assert_eq!(d.frame_budget, Some((240, 180)));
+        assert_eq!(d.render_tier(), "webgl2");
     }
 }

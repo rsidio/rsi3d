@@ -1,0 +1,128 @@
+{
+  "clearance_rules": [
+    {
+      "max": 0.8,
+      "min": 0.4,
+      "pair": [
+        "obj:sofa_01",
+        "obj:rug_01"
+      ],
+      "reason": "茶几应在沙发正前方 0.4–0.8m"
+    }
+  ],
+  "coordinate_system": "RUB",
+  "intent": "3 米挑高客厅，北欧风，落地窗，暖光",
+  "intent_keywords": [
+    {
+      "present": true,
+      "word": "落地窗"
+    },
+    {
+      "note": "缺一盆绿植，风格分上不去",
+      "present": false,
+      "word": "绿植"
+    }
+  ],
+  "lights": [
+    {
+      "color": "#ffe9c9",
+      "direction": [
+        0.3,
+        -1.0,
+        0.4
+      ],
+      "id": "sun",
+      "intensity": 2.4,
+      "kind": "directional"
+    },
+    {
+      "id": "env",
+      "intensity": 0.6,
+      "kind": "hdri"
+    }
+  ],
+  "objects": [
+    {
+      "aabb": {
+        "max": [
+          0.9,
+          0.85,
+          -1.7
+        ],
+        "min": [
+          -1.1,
+          0.0,
+          -2.6
+        ]
+      },
+      "editability": "full",
+      "id": "obj:sofa_01",
+      "layers": [
+        "mesh"
+      ],
+      "material": "fabric",
+      "material_params": {
+        "metallic": 0.0,
+        "opacity": 1.0,
+        "roughness": 0.85
+      },
+      "metrics": {
+        "triangles": 12480,
+        "watertight": true
+      },
+      "provenance": {
+        "created_at_rev": 0,
+        "origin": "imported",
+        "source": "vendor/sofa.glb",
+        "source_coordinate_system": "RDF"
+      },
+      "role": "furniture",
+      "rsi3d": {
+        "geometry": "aabb-proxy",
+        "mesh_ref": "sofa.mesh.glb"
+      }
+    },
+    {
+      "aabb": {
+        "max": [
+          1.4,
+          0.02,
+          3.2
+        ],
+        "min": [
+          -1.6,
+          0.0,
+          0.2
+        ]
+      },
+      "id": "obj:rug_01",
+      "layers": [
+        "mesh"
+      ],
+      "role": "floor"
+    }
+  ],
+  "room": {
+    "ceiling": 2.8,
+    "size": [
+      4.2,
+      2.8,
+      6.0
+    ],
+    "wallColor": "#f2ede6"
+  },
+  "source_coordinate_system": "RDF",
+  "spec": "rsi3d-scene/v1",
+  "units": "m",
+  "up_axis": "Y",
+  "window": {
+    "bandDepth": 1.5,
+    "height": 1.6,
+    "spanX": [
+      -1.2,
+      1.2
+    ],
+    "wall": "north",
+    "z": -2.9
+  }
+}

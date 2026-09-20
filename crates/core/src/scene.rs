@@ -30,6 +30,7 @@ pub type Extras = BTreeMap<String, serde_json::Value>;
 
 /// 轴对齐包围盒（H0 的几何代理）。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Aabb {
     pub min: [f64; 3],
     pub max: [f64; 3],
@@ -206,6 +207,7 @@ impl RoleKind {
 
 /// 表示层：同一节点的不同承载方式（对应 glTF 同一 node 的不同 primitive）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum LayerKind {
     /// 三角网格
@@ -222,6 +224,7 @@ pub enum LayerKind {
 
 /// 可编辑程度。**由层推导，不单独存**（避免两处真相）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum Editability {
     /// 可局部编辑
@@ -261,6 +264,7 @@ impl fmt::Display for Editability {
 
 /// 材质数值参数（H0 只需要这几个）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MaterialParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roughness: Option<f64>,
@@ -300,6 +304,7 @@ impl MaterialParams {
 
 /// 来源：谁造的这个节点（用于归因与「换资产」判定）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum Origin {
     #[default]
@@ -311,6 +316,7 @@ pub enum Origin {
 
 /// 来源信息。H3 引入真实几何后，这里会带 mesh 哈希与算法版本。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Provenance {
     #[serde(default, skip_serializing_if = "is_unknown_origin")]
     pub origin: Origin,
@@ -329,6 +335,7 @@ fn is_unknown_origin(o: &Origin) -> bool {
 
 /// 规模摘要（H0 只填三角面，其余留给 H3）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Metrics {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub triangles: u64,
@@ -356,6 +363,7 @@ impl Metrics {
 /// `id` 是 **stable_id**：Agent 的对话会跨越很多轮，`obj:sofa_01` 在多次 `edit` 之后
 /// 必须仍然指向同一把沙发——这是 diff、归因、回滚的共同前提。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Node {
     pub id: String,
     #[serde(default = "default_role")]
@@ -467,6 +475,7 @@ pub fn normalize_node_id(raw: &str) -> String {
 
 /// 灯光。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Light {
     pub id: String,
     /// `directional` | `hdri` | …（开放）
@@ -492,6 +501,7 @@ fn default_intensity() -> f64 {
 
 /// 窗（H0 单窗；与已发布模板的 `window` 键一致）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Window {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -514,6 +524,7 @@ fn default_band_depth() -> f64 {
 
 /// 房间。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Room {
     pub size: [f64; 3],
@@ -538,6 +549,7 @@ impl Room {
 
 /// 间距规则：**行业知识被显式化的地方**（太远和太近都算违规）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ClearanceRule {
     pub pair: [String; 2],
     pub min: f64,
@@ -568,6 +580,7 @@ impl ClearanceRule {
 
 /// 意图关键词核查（H0 的语义维度）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct IntentKeyword {
     pub word: String,
     #[serde(default)]
@@ -580,6 +593,7 @@ pub struct IntentKeyword {
 
 /// 场景 = 一棵节点树 + 环境 + 行业规则。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Scene {
     #[serde(default = "default_spec")]
     pub spec: String,

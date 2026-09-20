@@ -77,7 +77,20 @@ pub fn read_request(sock: &mut TcpStream) -> Result<Option<Request>, String> {
                     return Err("请求头过大".to_string());
                 }
             }
-            Err(e) => return Err(format!("读请求失败：{}", e)),
+            Err(e) => {
+                // 「连上了但一直没说话」不是错误：浏览器会预连接、只连不发（实测
+                // 会让日志里多出一条“读请求失败：Resource temporarily unavailable”）。
+                // 一个字都没收到就走人 → 当作正常关闭；说到一半断掉才是真错误。
+                if head.is_empty()
+                    && matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    )
+                {
+                    return Ok(None);
+                }
+                return Err(format!("读请求失败：{}", e));
+            }
         }
     }
 
@@ -211,6 +224,30 @@ pub fn send_chunk(sock: &mut TcpStream, data: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("写流失败：{}", e))
 }
 
+/// 对端是不是已经走了？（读到 EOF 就是走了）
+///
+/// 为什么需要主动探测：SSE 是**单向**的——服务端只写不读，所以对端悄悄消失（关标签页、
+/// 拔网线）只有在下一次**写**时才会暴露，而静止场景最长要等 10 秒的心跳。那 10 秒里
+/// `/healthz` 会报着"它连着"，名册上挂着一条**假的**记录。
+///
+/// 实现细节：读超时设的很小（1ms），所以没有数据时立刻返回「还在」。这个选项是**套接字级**
+/// 的（影响这个 fd 的所有读），但这条连接此后的读只有这里，写完响应头之后我们不再从它读
+/// 请求；写不受影响。客户端本来就不该在这条通道上发言，真发了也直接忽略。
+pub fn peer_gone(sock: &TcpStream) -> bool {
+    let mut probe = match sock.try_clone() {
+        Ok(s) => s,
+        Err(_) => return false, // 克隆不出来就别乱判死
+    };
+    if probe
+        .set_read_timeout(Some(std::time::Duration::from_millis(1)))
+        .is_err()
+    {
+        return false;
+    }
+    let mut byte = [0u8; 1];
+    matches!(probe.read(&mut byte), Ok(0))
+}
+
 /// 结束分块流（空块）。
 pub fn end_chunked(sock: &mut TcpStream) {
     let _ = sock.write_all(b"0\r\n\r\n");
@@ -226,5 +263,35 @@ mod tests {
         assert_eq!(status_text(401), "Unauthorized");
         assert_eq!(status_text(409), "Conflict");
         assert_eq!(status_text(426), "Upgrade Required");
+    }
+
+    #[test]
+    fn a_silent_connection_is_not_an_error_but_a_half_request_is() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // 1) 连上但一个字都不发（浏览器预连接就是这样）：超时 → 安静地当作正常关闭
+        let silent = std::net::TcpStream::connect(addr).unwrap();
+        let (mut server_side, _) = listener.accept().unwrap();
+        server_side
+            .set_read_timeout(Some(std::time::Duration::from_millis(30)))
+            .unwrap();
+        assert!(
+            matches!(read_request(&mut server_side), Ok(None)),
+            "连上不说话的连接不该被当成错误"
+        );
+        drop(silent);
+
+        // 2) 说到一半就不说了：**这是**错误（否则我们会把一个残缺请求当正常）
+        let mut half = std::net::TcpStream::connect(addr).unwrap();
+        let (mut server_side, _) = listener.accept().unwrap();
+        server_side
+            .set_read_timeout(Some(std::time::Duration::from_millis(30)))
+            .unwrap();
+        use std::io::Write;
+        half.write_all(b"GET / HTTP/1.1\r\n").unwrap();
+        half.flush().unwrap();
+        let err = read_request(&mut server_side).unwrap_err();
+        assert!(err.contains("读请求失败"), "{}", err);
     }
 }

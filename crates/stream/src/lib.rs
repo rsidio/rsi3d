@@ -35,11 +35,15 @@
 
 pub mod gltf;
 pub mod protocol;
+pub mod render_mode;
 pub mod session;
 
 pub use gltf::{diff_ids, scene_to_gltf, GEOMETRY_AABB_PROXY};
 pub use protocol::{
-    parse_client, query_get, Camera, ClientMessage, ServerMessage, StreamKind, STREAM_PROTOCOL,
+    is_evidence_renderer, parse_client, parse_px, query_get, Camera, Capability, CapabilityKind,
+    ClientDeclaration, ClientMessage, DeclarationNote, NoteKind, ServerMessage, StreamKind,
+    FRAME_RENDERERS, KNOWN_CLIENT_CAPABILITIES, MIN_FRAME_SIDE, RENDERER_CPU_RASTER,
+    STREAM_PROTOCOL,
 };
 pub use session::{
     decode_b64, frame_message, now_ms, patch_message, session_for_scene, session_for_view,

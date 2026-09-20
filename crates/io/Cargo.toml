@@ -1,0 +1,15 @@
+[package]
+name = "rsi3d-harness-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "导入层：把外部 3D/CAD 资产（glTF/GLB/OBJ/STL/blend…）接成统一场景"
+publish = false
+
+[dependencies]
+serde_json.workspace = true
+sha2.workspace = true
+rsi3d-harness-core = { path = "../core" }
+
+[dev-dependencies]
+rsi3d-harness-contract = { path = "../contract" }

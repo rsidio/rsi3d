@@ -1,0 +1,24 @@
+{
+  "spec": "rsi3d-bundle/v1",
+  "name": "rsi3d-harness",
+  "kind": "skill",
+  "title": "rsi3d-harness 3D 资产引擎",
+  "summary": "用自然语言驱动 3D 资产：观察 → 编辑 → 评测 → 回滚，每步带 reason 与逆命令，结果可复现、可对账。",
+  "entry": "SKILL.md",
+  "agents": ["claude-code", "copilot", "agents"],
+  "files": [
+    "SKILL.md",
+    "references/cli.md",
+    "references/discipline.md",
+    "references/gltf.md",
+    "references/mcp-tools.md"
+  ],
+  "requires": {
+    "bins": ["rsi3d-harness"],
+    "hint": "cargo build --release（在 rsi3d-harness/ 里），或 npx @rsi3d/cli rsi3d-harness"
+  },
+  "mcp": {
+    "command": "rsi3d-harness",
+    "args": ["mcp", "--root", "."]
+  }
+}

@@ -1,0 +1,21 @@
+[package]
+name = "rsi3d-harness-contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "契约单一出处：从 Rust 类型派生给非 Rust 消费者的形状，并门禁手抄的镜像"
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+# 打开内核的 `schema` 特性：schema 这一份产物想从**类型**派生（schemars），
+# 而不是从样例观察。内核默认构建不带这个依赖。
+rsi3d-harness-core = { path = "../core", features = ["schema"] }
+rsi3d-harness-stream = { path = "../stream" }
+schemars = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# 用**成熟校验器**验收我们派生的 schema（不是拿我们自己的代码验自己）。
+# 关掉默认特性：那会拖进 reqwest + aws-lc-rs，而这里只需要纯校验。
+jsonschema = { version = "0.56", default-features = false }

@@ -84,21 +84,32 @@ pub fn node_to_gltf(node: &Node, material_index: Option<usize>) -> Value {
     }
     n.insert("translation".into(), json!(center));
     n.insert("scale".into(), json!(size));
+    let mut extras = json!({
+        "id": node.id,
+        "role": node.role,
+        "material_name": node.material,
+        "aabb": node.aabb.to_array(),
+        "editability": node.editability().as_str(),
+        "layers": node.layers.iter().map(|l| format!("{:?}", l).to_lowercase()).collect::<Vec<_>>(),
+        "geometry": GEOMETRY_AABB_PROXY,
+        // 展平后的基色：让增量载荷自包含（不必依赖快照里的材质表）
+        "color": [rgb[0], rgb[1], rgb[2]],
+    });
+    // 导入来的资产：几何真身在 side-car 里，这里只说文件名。
+    //
+    // **服务端光栅依旧画包围盒代理**（证据档次没变），这只是给客户端一条"去哪拿真网格"的
+    // 线索——拿不到就还是盒子，不会变成"白屏"。
+    if let Some(mesh_ref) = node
+        .extras
+        .get("rsi3d")
+        .and_then(|v| v.get("mesh_ref"))
+        .and_then(|v| v.as_str())
+    {
+        extras["mesh_ref"] = json!(mesh_ref);
+    }
     n.insert(
         "extras".into(),
-        json!({
-            "rsi3d": {
-                "id": node.id,
-                "role": node.role,
-                "material_name": node.material,
-                "aabb": node.aabb.to_array(),
-                "editability": node.editability().as_str(),
-                "layers": node.layers.iter().map(|l| format!("{:?}", l).to_lowercase()).collect::<Vec<_>>(),
-                "geometry": GEOMETRY_AABB_PROXY,
-                // 展平后的基色：让增量载荷自包含（不必依赖快照里的材质表）
-                "color": [rgb[0], rgb[1], rgb[2]],
-            }
-        }),
+        json!({ "rsi3d": extras }),
     );
     Value::Object(n)
 }
@@ -185,13 +196,19 @@ pub fn scene_to_gltf(scene: &Scene) -> Value {
 
     let lights: Vec<Value> = scene.lights.iter().map(light_to_gltf).collect();
 
+    // **场景必须引用根节点**：glTF 里 `nodes` 只是"节点池"，`scenes[].nodes` 才是
+    // "这个场景由哪些节点组成"。少了这一步，任何符合规范的加载器（three.js 的
+    // GLTFLoader、Blender、Fyrox…）读到的都是**空场景**——文件合法，内容为零。
+    // 我们所有节点都是根节点（H0 没有层级），所以就是 0..n。
+    let root_nodes: Vec<usize> = (0..nodes.len()).collect();
+
     let mut root = Map::new();
     root.insert("asset".into(), json!({
         "version": "2.0",
         "generator": format!("rsi3d-harness/{}", env!("CARGO_PKG_VERSION")),
     }));
     root.insert("scene".into(), json!(0));
-    root.insert("scenes".into(), json!([{ "name": "rsi3d", "nodes": [] }]));
+    root.insert("scenes".into(), json!([{ "name": "rsi3d", "nodes": root_nodes }]));
     root.insert("nodes".into(), Value::Array(nodes));
     root.insert("materials".into(), Value::Array(materials));
 
@@ -319,6 +336,28 @@ mod tests {
         // 灯光走 Khronos 扩展（不自造）
         assert!(g["extensionsUsed"].as_array().unwrap().contains(&json!("KHR_lights_punctual")));
         assert_eq!(g["extensions"]["KHR_lights_punctual"]["lights"][0]["name"], "sun");
+    }
+
+    /// **场景必须真的把节点挂上**。
+    ///
+    /// 这个用例是被一次外部验收逼出来的：`nodes` 是"节点池"，`scenes[].nodes` 才是
+    /// "这个场景由哪些节点组成"。只填节点池的话文件**完全合法**，但任何标准加载器
+    /// （three.js GLTFLoader / Blender / Fyrox）读到的都是**空场景**——
+    /// 而只断言 `nodes` 的测试是看不出来的（`gltf-transform inspect` 会报
+    /// `renderVertexCount: 0` + 包围盒 `Infinity`）。
+    #[test]
+    fn the_scene_actually_references_every_node() {
+        let g = scene_to_gltf(&scene());
+        let pool = g["nodes"].as_array().unwrap().len();
+        let roots: Vec<u64> = g["scenes"][0]["nodes"]
+            .as_array()
+            .expect("scenes[0].nodes 必须是数组")
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        assert_eq!(roots.len(), pool, "每个节点都该是场景的根（H0 没有层级）");
+        assert_eq!(roots, (0..pool as u64).collect::<Vec<_>>(), "根节点索引要覆盖全部节点");
+        assert_eq!(g["scene"], json!(0), "默认场景下标要指到那个非空场景");
     }
 
     #[test]

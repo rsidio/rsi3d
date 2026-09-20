@@ -21,3 +21,5 @@ rsi3d-harness-mcp = { path = "../mcp" }
 rsi3d-harness-render = { path = "../render" }
 rsi3d-harness-stream = { path = "../stream" }
 rsi3d-harness-serve = { path = "../serve" }
+rsi3d-harness-contract = { path = "../contract" }
+rsi3d-harness-io = { path = "../io" }

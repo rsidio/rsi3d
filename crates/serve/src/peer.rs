@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use rsi3d_harness_stream::protocol::{ServerMessage, StreamKind};
+use rsi3d_harness_stream::protocol::{ClientDeclaration, ServerMessage, StreamKind};
 
 /// 一个已建立的 SSE 连接。
 pub struct Peer {
@@ -326,12 +326,33 @@ impl Peer {
 
 /// 组合一个订阅地址（token 走 query：`EventSource` 无法设请求头）。
 pub fn stream_path(kind: StreamKind, view: Option<&str>, token: &str, from: Option<u32>) -> String {
+    stream_path_with_client(kind, view, token, from, &ClientDeclaration::default())
+}
+
+/// 带能力声明的订阅地址。
+///
+/// 声明走**查询参数**而不是模型里的 `ClientMessage`：一条 SSE 连接就是一次订阅，
+/// 它是唯一天然带"连接身份"的位置（POST 通道归属不到具体的连接）。
+pub fn stream_path_with_client(
+    kind: StreamKind,
+    view: Option<&str>,
+    token: &str,
+    from: Option<u32>,
+    client: &ClientDeclaration,
+) -> String {
     let mut p = format!("/stream/{}?token={}", kind.as_str(), urlencode(token));
     if let Some(v) = view {
         p.push_str(&format!("&view={}", urlencode(v)));
     }
     if let Some(f) = from {
         p.push_str(&format!("&from={}", f));
+    }
+    p.push_str(&format!("&agent={}", urlencode(&client.agent)));
+    if !client.capabilities.is_empty() {
+        p.push_str(&format!(
+            "&cap={}",
+            urlencode(&client.capabilities.join(","))
+        ));
     }
     p
 }

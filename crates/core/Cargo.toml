@@ -11,3 +11,9 @@ homepage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+
+# 只在 `schema` 特性下引入：契约层要"从类型派生 schema"，内核默认构建**不**带上它
+schemars = { version = "1", optional = true, features = ["derive"] }
+
+[features]
+schema = ["dep:schemars"]

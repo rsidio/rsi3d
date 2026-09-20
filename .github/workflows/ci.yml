@@ -1,0 +1,52 @@
+name: CI
+
+# 这个仓库对外就行一件事：**让「能跑」这个说法可以被人复核**。
+# 所以 CI 只跑两样东西——单元/集成测试与端到端冒烟，且都是本地同一条命令。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支上的旧跑批取消：CI 是给人看的信号，不是归档
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: cargo test + smoke
+    # 为什么先只在 macOS 上跑：那是**实际验证过**的平台（见 README 的 Status）。
+    # 内核不依赖平台，Linux 大概率也能过，但没实跑过就不写进来 ——
+    # 一个常年红着的 job 比没有 job 更糟。要在 Linux 上加，先本地跑通
+    # `bash scripts/smoke.sh`（它需要 curl / python3 / node / zip / unzip）。
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      # 冒烟会跑脚手架生成的 Node Agent（用 mock 引擎离线跑通一次完整循环），
+      # 也会验 npm 包的启动器，所以 node 是硬依赖。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          # 锁文件变了就重建缓存；restore-keys 让同 OS 的新锁文件能续用旧缓存
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # --locked：锁文件与 Cargo.toml 不一致就直接失败（别让 CI 偷偷改锁）
+      - name: Unit and integration tests
+        run: cargo test --locked --workspace
+
+      - name: End-to-end smoke
+        run: bash scripts/smoke.sh

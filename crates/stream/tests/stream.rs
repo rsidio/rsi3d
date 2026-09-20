@@ -7,7 +7,9 @@ use serde_json::json;
 
 use rsi3d_harness_core::{CommandRequest, Document, Scene};
 use rsi3d_harness_render::ViewKind;
-use rsi3d_harness_stream::protocol::{Camera, ClientMessage, ServerMessage, StreamKind};
+use rsi3d_harness_stream::protocol::{
+    Camera, ClientMessage, ServerMessage, StreamKind, RENDERER_CPU_RASTER,
+};
 use rsi3d_harness_stream::session::{
     session_for_view, ClientSession, Outbox, ScenePatch, ServerSession,
 };
@@ -326,6 +328,7 @@ fn frames_are_latest_wins_and_never_queue_up() {
             view: "top".into(),
             width: 1,
             height: 1,
+            renderer: RENDERER_CPU_RASTER.into(),
             image_hash: format!("h{}", i),
             png_base64: "x".into(),
             band_occlusion: None,

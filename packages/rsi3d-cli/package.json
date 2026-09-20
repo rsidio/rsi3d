@@ -1,16 +1,16 @@
 {
   "name": "@rsi3d/cli",
   "version": "0.1.0",
-  "description": "rsi3d 官方命令行 + 3D 资产 Agentic 引擎入口（发布/检索/验签 · MCP 服务 · 场景编辑器 · 插件式脚手架）",
+  "description": "npm entry point for the rsi3d CLI and the rsi3d-harness 3D asset engine: publish/search/verify, MCP server, scene edit-render-verify, scaffolding",
   "license": "Apache-2.0",
   "homepage": "https://rsi3d.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rsi3d/rsi3d.git",
-    "directory": "rsi3d-harness/packages/rsi3d-cli"
+    "url": "git+https://github.com/rsidio/rsi3d.git",
+    "directory": "packages/rsi3d-cli"
   },
   "bugs": {
-    "url": "https://github.com/rsi3d/rsi3d/issues"
+    "url": "https://github.com/rsidio/rsi3d/issues"
   },
   "keywords": [
     "rsi3d",

@@ -37,6 +37,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use rsi3d_harness_core::{report, Document};
+use rsi3d_harness_contract as contract;
+use rsi3d_harness_stream::{CapabilityKind, ClientDeclaration, NoteKind, KNOWN_CLIENT_CAPABILITIES};
 use rsi3d_harness_stream::protocol::{
     parse_client, query_get, Camera, ClientMessage, ServerMessage, StreamKind, STREAM_PROTOCOL,
 };
@@ -67,6 +69,14 @@ pub struct ServeOptions {
     pub frame_height: u32,
     /// 显示名（客户端标题栏用）
     pub name: String,
+    /// 判定用的规则表（缺省用内置的那份）。CLI 把 `--policy <file>` 读进来交给这里。
+    pub policy: Option<rsi3d_harness_stream::render_mode::RenderPolicy>,
+
+    /// 几何 side-car（`<文档名>.mesh.glb` 的字节）。
+    ///
+    /// 由调用方读好、交进来：路径与 `--root` 的边界检查同样留在 CLI。
+    /// `None` = 这个文档没有 side-car（客户端就画包围盒代理，不会因此报错）。
+    pub mesh: Option<Vec<u8>>,
 }
 
 impl ServeOptions {
@@ -81,7 +91,21 @@ impl ServeOptions {
             frame_width: DEFAULT_FRAME_WIDTH,
             frame_height: DEFAULT_FRAME_HEIGHT,
             name: "scene".to_string(),
+            mesh: None,
+            policy: None,
         }
+    }
+
+    /// 用指定的规则表判定（`--policy <file>`；缺省用内置那份）。
+    pub fn with_policy(mut self, policy: rsi3d_harness_stream::render_mode::RenderPolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
+    /// 带上几何 side-car（浏览器靠它把包围盒换成真网格）。
+    pub fn with_mesh(mut self, bytes: Vec<u8>) -> Self {
+        self.mesh = Some(bytes);
+        self
     }
 
     pub fn with_port(mut self, port: u16) -> Self {
@@ -159,8 +183,7 @@ struct Shared {
     doc: Mutex<Document>,
     started: Instant,
     /// 停止标志放在这里：SSE 连接（长连接）靠它退出，否则线程会一直挂着
-    stopped: AtomicBool,
-    /// 当前连接数（可观测）
+    stopped: AtomicBool,    /// 当前连接数（可观测）
     connections: AtomicUsize,
     ticked: AtomicU64,
     messages_sent: AtomicU64,
@@ -172,6 +195,22 @@ struct Shared {
     tick_ms: u64,
     frame_width: u32,
     frame_height: u32,
+    /// 当前连着的客户端名册（**连上就写、断开就抹**，所以它永远是当下的真状态）。
+    ///
+    /// 为什么要这个：之前服务端只知道"有几条连接"，不知道对面是谁、能不能干活——
+    /// 于是客户端降级（CDN 被拦 / GPU 上下文丢了）在服务端完全看不见。
+    clients: Mutex<Vec<(u64, Value)>>,
+    next_client_id: AtomicU64,
+    /// 几何 side-car（<文档名>.mesh.glb）。只读、不带锁：启动后不再变
+    mesh: Option<Vec<u8>>,
+    /// 判定用的规则表（`--policy` 给的那份；缺省用内置的）。
+    ///
+    /// 这就是"平台拥有规则表"的落地方式：把 rsi3d.com 发的那份存成文件递进来，
+    /// 离线判定立刻与线上同一套阈值。
+    policy: rsi3d_harness_stream::render_mode::RenderPolicy,
+    /// 最近一次上报的主机参数与判定结果（**只留最近一次**：它的用途是"运维看得见
+    /// 为什么这台机器被降档"，不是做设备台账——那会是另一种数据收集，得单独谈。）
+    host: Mutex<Option<(rsi3d_harness_stream::render_mode::HostProfile, rsi3d_harness_stream::render_mode::RenderVerdict)>>,
 }
 
 impl Shared {
@@ -194,7 +233,84 @@ impl Shared {
             "frames_sent": self.frames_sent.load(Ordering::Relaxed),
             "patches_dropped": self.patches_dropped.load(Ordering::Relaxed),
             "ticks": self.ticked.load(Ordering::Relaxed),
+            // 最近一次主机判定（没有就是 null）：运维靠它回答"为什么这台机器被降档"
+            //
+            // 只留**最近一次**、只在内存里：判定参数不是设备台账（见 docs/render-mode.md §5）
+            "host": self.host.lock().unwrap().as_ref().map(|(p, v)| json!({
+                "agent": p.agent,
+                "form": p.form,
+                "privacy": p.privacy,
+                "gpu_api": p.gpu.api,
+                "cores": p.cpu.cores,
+                "software_raster": p.gpu.software,
+                "mode": v.mode,
+                "authority": v.authority,
+                "policy_version": v.policy_version,
+                "limits": v.limits,
+                "reasons": v.reasons,
+                "missing": v.missing,
+                "fallbacks": v.fallbacks.iter().map(|f| f.title.clone()).collect::<Vec<_>>(),
+            })),
+            // 谁连着、各自能干什么（客户端自报，服务端原样记录）
+            "clients": self.clients.lock().unwrap().iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(),
+            // 我们认识的能力名（单一出处，见 `crates/stream/src/protocol.rs`）
+            "capabilities_known": KNOWN_CLIENT_CAPABILITIES
+                .iter()
+                .map(|c| json!({
+                    "name": c.name,
+                    "meaning": c.meaning,
+                    "kind": match c.kind {
+                        CapabilityKind::Consume => "consume",
+                        CapabilityKind::Render => "render",
+                        CapabilityKind::Downlevel => "downlevel",
+                        CapabilityKind::Form => "form",
+                        CapabilityKind::Robustness => "robustness",
+                    },
+                    "needs_any": c.needs_any,
+                }))
+                .collect::<Vec<_>>(),
         })
+    }
+
+    /// 登记一个刚连上的客户端，返回它的 id（断开时凭 id 抹掉）。
+    ///
+    /// 声明变化 = 重连 = 新的一行，所以这里不做「更新」：行是不可变的，
+    /// 于是 `clients` 永远不会出现"半新半旧"的状态。
+    fn register_client(
+        &self,
+        client: &ClientDeclaration,
+        kind: &str,
+        revision: u32,
+        frame_px: Option<(u32, u32)>,
+    ) -> u64 {
+        let id = self.next_client_id.fetch_add(1, Ordering::Relaxed);
+        let mut row = json!({
+            "id": id,
+            "agent": client.agent,
+            "capabilities": client.capabilities,
+            // 不认识的原样带上：运维据此知道"客户端在说什么我不懂"
+            "unknown": client.unknown(),
+            // 派生结论（不让人自己拼字符串）：这个客户端到底能画到什么程度
+            "render_tier": client.render_tier(),
+            // 声明里的问题与降级说明（矛盾 / 依赖没满足 / 降级）
+            "notes": client.notes()
+                .iter()
+                .map(|n| json!({"kind": format!("{:?}", n.kind).to_lowercase(), "text": n.text}))
+                .collect::<Vec<_>>(),
+            "kind": kind,
+            "connected_at_rev": revision,
+            "connected_at_ms": self.started.elapsed().as_millis() as u64,
+        });
+        // 帧尺寸只对图像流有意义（场景流不发帧）——名册说的每一句都得是有意义的真话
+        if let Some((fw, fh)) = frame_px {
+            row["frame_px"] = json!(format!("{}x{}", fw, fh));
+        }
+        self.clients.lock().unwrap().push((id, row));
+        id
+    }
+
+    fn unregister_client(&self, id: u64) {
+        self.clients.lock().unwrap().retain(|(i, _)| *i != id);
     }
 }
 
@@ -230,6 +346,14 @@ pub fn serve(opts: ServeOptions) -> Result<ServeHandle, String> {
         tick_ms: opts.tick_ms.max(5),
         frame_width: opts.frame_width,
         frame_height: opts.frame_height,
+        clients: Mutex::new(Vec::new()),
+        next_client_id: AtomicU64::new(1),
+        mesh: opts.mesh.clone(),
+        policy: opts
+            .policy
+            .clone()
+            .unwrap_or_else(rsi3d_harness_stream::render_mode::default_policy),
+        host: Mutex::new(None),
     });
 
     let handle = ServeHandle {
@@ -308,6 +432,39 @@ fn route(sock: &mut TcpStream, req: &http::Request, shared: &Arc<Shared>) -> Res
             client::CLIENT_JS.as_bytes(),
         );
     }
+    // 契约产物：**现算**（不读磁盘上的文件——二进制旁边未必有 contract/），
+    // 且与 `rsi3d-harness contract` 写出来的字节完全一致。
+    // 公开的理由同 healthz：它只描述形状，不含任何资产数据。
+    if req.method == "GET" && path == "/contract" {
+        let known: Vec<serde_json::Value> = ["scene", "view", "stream_server", "stream_client"]
+            .iter()
+            .map(|b| json!({ "block": b, "keys": contract::known_keys(b).len() }))
+            .collect();
+        return reply_json(
+            sock,
+            200,
+            &json!({
+                "ok": true,
+                "artifacts": contract::ARTIFACT_NAMES,
+                "known_keys": known,
+                "note": "由 Rust 类型派生，不是手写的；内核（Scene::from_json）才是权威",
+            }),
+        );
+    }
+    if req.method == "GET" {
+        if let Some(name) = path.strip_prefix("/contract/") {
+            match contract::artifacts().into_iter().find(|(n, _)| *n == name) {
+                Some((_, body)) => return reply(sock, 200, "application/json; charset=utf-8", body.as_bytes()),
+                None => {
+                    return reply_json(
+                        sock,
+                        404,
+                        &json!({"ok": false, "error": "not_found", "known": contract::ARTIFACT_NAMES}),
+                    )
+                }
+            }
+        }
+    }
 
     if !authorized(req, &query, &shared.token) {
         return reply_json(
@@ -335,6 +492,18 @@ fn route(sock: &mut TcpStream, req: &http::Request, shared: &Arc<Shared>) -> Res
             let body = serde_json::to_string(&gltf).unwrap_or_else(|_| "{}".into());
             reply(sock, 200, "model/gltf+json", body.as_bytes())
         }
+        ("GET", "/mesh.glb") => match &shared.mesh {
+            Some(bytes) => reply(sock, 200, "model/gltf-binary", bytes),
+            None => reply_json(
+                sock,
+                404,
+                &json!({
+                    "ok": false,
+                    "error": "no_mesh_sidecar",
+                    "hint": "这个文档旁边没有 <文档名>.mesh.glb：导入时别加 --no-mesh，或把 side-car 与场景放同一目录",
+                }),
+            ),
+        },
         ("GET", "/observe") => {
             // 与 MCP / CLI 同一份观测：浏览器里看到的告警和 Agent 看到的必须一致
             let doc = shared.doc.lock().unwrap();
@@ -343,6 +512,13 @@ fn route(sock: &mut TcpStream, req: &http::Request, shared: &Arc<Shared>) -> Res
             });
             reply_json(sock, 200, &obs)
         }
+        // 主机参数上报 → 本地判定（离线兜底那一条）。
+        //
+        // 为什么要这个接口：联网时浏览器直接问 rsi3d.com 拿权威判定；内网/离线/平台挂了
+        // 的时候得有地方算——这里用**同一份规则表**（`--policy` 或内置）算，并把
+        // `authority` 标成 `local`。服务端顺手把它记进 healthz，运维就能回答
+        // "为什么这台机器只有 960×600"。
+        ("POST", "/capability") => post_capability(sock, req, shared),
         ("POST", "/command") => post_command(sock, req, shared),
         ("POST", "/camera") => post_camera(sock, req),
         ("POST", "/message") => post_message(sock, req, shared),
@@ -351,6 +527,20 @@ fn route(sock: &mut TcpStream, req: &http::Request, shared: &Arc<Shared>) -> Res
             404,
             &json!({"ok": false, "error": "not_found", "path": path, "method": req.method}),
         ),
+    }
+}
+
+/// 帧率上限：客户端只能要**更低**（判定说这台机器吃不下满帧率时），要不到更高。
+///
+/// 与像素预算（`?px=`）是同一条纪律：客户端给的是 limits，服务端只缩不放。
+/// 抽成函数是为了能单独钉住——这类"只缩不放"的规则一旦被改成 min/max 混用，
+/// 表现是"服务端被客户端牵着走"，而那不会报错。
+fn clamp_fps(asked: u32, server: u32) -> u32 {
+    let server = server.max(1);
+    if asked == 0 {
+        server
+    } else {
+        asked.min(server)
     }
 }
 
@@ -452,14 +642,68 @@ fn stream(
         .and_then(|v| Camera::from_preset(&v))
         .unwrap_or(default_camera);
 
+    // 客户端自报身份与能力（`?agent=…&cap=a,b,c&px=WxH`）。
+    // 放在这里而不是 POST：**只有订阅连接有"连接身份"**，POST 通道归属不到人。
+    let client = ClientDeclaration::from_query(|k| query_get(query, k));
+    if !client.unknown().is_empty() {
+        // 不拒（旧服务端 + 新客户端要能共存），但绝不静默——否则新客户端声明了个
+        // 服务端不认识的能力，而运维在日志里什么也看不到
+        eprintln!(
+            "⚠ 客户端声明了不认识的能力：{}（已原样记录，不影响连接）",
+            client.unknown().join(", ")
+        );
+    }
+    // 自相矛盾/依赖没满足 = 声明本身有问题，要喊；降级（能连但画不出来）是合法状态，
+    // 只记账不喊——它会在 `/healthz` 的名册里以 `degraded` 出现
+    for note in client.notes() {
+        if note.kind == NoteKind::Degraded {
+            continue;
+        }
+        let label = match note.kind {
+            NoteKind::Contradiction => "自相矛盾",
+            NoteKind::Unmet => "依赖没满足",
+            NoteKind::Degraded => "降级",
+        };
+        eprintln!("⚠ 客户端声明{}：{}（已原样记录）", label, note.text);
+    }
+
     // 断线续传：EventSource 重连时会自动带 Last-Event-ID；也接受 ?from=
     let from = req
         .header("Last-Event-ID")
         .and_then(|v| v.trim().parse::<u32>().ok())
         .or_else(|| query_get(query, "from").and_then(|v| v.parse::<u32>().ok()));
 
+    // 帧率上限：客户端可以**要更低**（判定说这机器吃不下满帧率时），但**要不到更高**。
+    // 与像素预算同一条纪律：limits 只缩不放。
+    let asked_fps = query_get(query, "fps")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    let base_fps = if kind == StreamKind::Frame { shared.fps } else { 0 };
+    let (fps, fps_note) = if kind == StreamKind::Frame && asked_fps > 0 {
+        let f = clamp_fps(asked_fps, shared.fps);
+        let note = if asked_fps > shared.fps {
+            Some(format!(
+                "客户端要 {} fps，服务端上限 {}——按下限给（只缩不放）",
+                asked_fps, shared.fps
+            ))
+        } else {
+            Some(format!("客户端要 {} fps（≤ 服务端上限 {}）", asked_fps, shared.fps))
+        };
+        (f, note)
+    } else {
+        (base_fps, None)
+    };
+    if let Some(n) = fps_note {
+        eprintln!("◦ {}", n);
+    }
     let mut sub = Subscription::new(kind, camera, shared.frame_width, shared.frame_height)
-        .with_fps(if kind == StreamKind::Frame { shared.fps } else { 0 });
+        .with_fps(fps);
+    // 客户端声明的**显示预算**（wgpu 那套里的 limits）：等比缩到它框内，只缩不放。
+    // 一个手机端不必收 480×360 的帧，4K 屏也不必被卡在这个尺寸。
+    let (fw, fh) = client.frame_size((shared.frame_width, shared.frame_height));
+    if (fw, fh) != (shared.frame_width, shared.frame_height) {
+        sub.set_size(fw, fh);
+    }
 
     // 握手先发：客户端据此知道自己接上的是哪一版、几何是什么档次。
     //
@@ -469,7 +713,7 @@ fn stream(
         let doc = shared.doc.lock().unwrap();
         let current = doc.revision();
         let resumed = sub.resume(from, current);
-        let mut out = welcome_message(&doc, kind, &sub.camera, resumed, current).to_sse();
+        let mut out = welcome_message(&doc, kind, &sub.camera, resumed, current, &client).to_sse();
         if !resumed {
             if kind == StreamKind::Scene {
                 out.push_str(&snapshot_message(&doc, current).to_sse());
@@ -481,8 +725,24 @@ fn stream(
 
     http::start_chunked(sock, "text/event-stream; charset=utf-8")?;
     shared.connections.fetch_add(1, Ordering::Relaxed);
-    let _guard = ConnGuard {
+    // 登记客户端：连上就写，断开就抹（`ConnGuard` 管着），于是 `/healthz` 里
+    // 的 `clients` **永远是当前真的连着的**，不是"连过"的历史
+    let client_id = shared.register_client(
+        &client,
+        kind.as_str(),
+        {
+            let doc = shared.doc.lock().unwrap();
+            doc.revision()
+        },
+        // 尺寸只报给图像流连接（场景流不发帧）
+        if kind == StreamKind::Frame {
+            Some((fw, fh))
+        } else {
+            None
+        },
+    );    let _guard = ConnGuard {
         shared: shared.clone(),
+        client_id: Some(client_id),
     };
 
     // 首块立刻发：客户端不用等下一轮 tick 才知道自己接上了
@@ -491,6 +751,10 @@ fn stream(
     let mut last_heartbeat = Instant::now();
     loop {
         if shared.stopped.load(Ordering::SeqCst) {
+            break;
+        }
+        // 对端走了就立刻收工：否则 `/healthz` 会在最长一个心跳周期里报着"它连着"
+        if http::peer_gone(sock) {
             break;
         }
         let msgs = {
@@ -538,11 +802,15 @@ fn stream(
 /// 连接计数：无论怎么退出（正常/出错/提前 return）都记账。
 struct ConnGuard {
     shared: Arc<Shared>,
+    client_id: Option<u64>,
 }
 
 impl Drop for ConnGuard {
     fn drop(&mut self) {
         self.shared.connections.fetch_sub(1, Ordering::Relaxed);
+        if let Some(id) = self.client_id {
+            self.shared.unregister_client(id);
+        }
     }
 }
 
@@ -622,6 +890,69 @@ fn post_camera(sock: &mut TcpStream, req: &http::Request) -> Result<(), String> 
 }
 
 /// 通用上行入口：把 `ClientMessage` 直接喂进来（客户端实现更省事）。
+/// `POST /capability`：主机参数进来，判定出去。
+///
+/// 这里**不做任何持久化、不写日志到磁盘、不建立设备指纹**：参数只用于这一次判定，
+/// 服务端只在内存里留最近一次（给 healthz 看）。要给平台做统计是另一件事，得单独谈
+/// 隐私边界（见 `docs/render-mode.md` §5）。
+fn post_capability(sock: &mut TcpStream, req: &http::Request, shared: &Shared) -> Result<(), String> {
+    use rsi3d_harness_stream::render_mode::{assess, explain, HostProfile};
+
+    let body = req.body_text();
+    // **不许静默降档**：HostProfile 的字段全都有缺省，所以 `{"nope":1}` 会解析成
+    // "一台什么都没报的机器" → GPU 接口未知 → 判成兜底档。手滑的客户端会被无声降档，
+    // 它看到的只是"我这台机器被判成低档"。所以：一个认识的外层键都没有就直接拒绝。
+    let looks_like_profile = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.as_object().cloned())
+        .map(|o| {
+            ["agent", "form", "gpu", "cpu", "display", "bench", "privacy"]
+                .iter()
+                .any(|k| o.contains_key(*k))
+        })
+        .unwrap_or(false);
+    if !looks_like_profile {
+        return reply_json(
+            sock,
+            400,
+            &json!({
+                "ok": false,
+                "error": "bad_profile",
+                "message": "这份 JSON 里没有任何已知的主机参数键",
+                "hint": "要的是 HostProfile（agent/form/gpu/cpu/display/bench/privacy）——别让它变成一个空主机的判定",
+            }),
+        );
+    }
+    let profile: HostProfile = match serde_json::from_str(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            return reply_json(
+                sock,
+                400,
+                &json!({
+                    "ok": false,
+                    "error": "bad_profile",
+                    "message": e.to_string(),
+                    "hint": "要的是 HostProfile（agent/form/gpu/cpu/display/bench/privacy；见 /contract/render-policy.json 与 docs/render-mode.md）",
+                }),
+            )
+        }
+    };
+    let verdict = assess(&profile, &shared.policy, "local");
+    *shared.host.lock().unwrap() = Some((profile, verdict.clone()));
+    reply_json(
+        sock,
+        200,
+        &json!({
+            "ok": true,
+            "authority": verdict.authority,
+            "policy_version": verdict.policy_version,
+            "verdict": verdict,
+            "explain": explain(&verdict),
+        }),
+    )
+}
+
 fn post_message(sock: &mut TcpStream, req: &http::Request, shared: &Shared) -> Result<(), String> {
     let body = req.body_text();
     match parse_client(&body) {
@@ -707,5 +1038,19 @@ mod tests {
         let b = random_token();
         assert_ne!(a, b);
         assert_eq!(a.len(), 16);
+    }
+}
+
+#[cfg(test)]
+mod fps_tests {
+    use super::clamp_fps;
+
+    #[test]
+    fn client_can_lower_the_frame_rate_but_never_raise_it() {
+        assert_eq!(clamp_fps(2, 8), 2, "要更低：给更低的");
+        assert_eq!(clamp_fps(60, 8), 8, "要更高：按服务端上限给（只缩不放）");
+        assert_eq!(clamp_fps(8, 8), 8);
+        assert_eq!(clamp_fps(0, 8), 8, "没提就按服务端配置");
+        assert_eq!(clamp_fps(5, 0), 1, "服务端配 0（不限）也不能真的不限：至少 1");
     }
 }

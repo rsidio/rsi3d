@@ -1,0 +1,164 @@
+{
+  "fallbacks": [
+    {
+      "link": "https://rsi3d.com/doc/render-mode",
+      "title": "只订阅服务端图像流",
+      "what": "把渲染交给服务端，客户端只显示图像流（浏览器里会自动这么切；命令行用 `rsi3d-harness stream --kind frame`）",
+      "when_at_or_below": "client-lite",
+      "why": "渲染在服务端完成，客户端只要能把一张 PNG 贴出来——对 GPU 几乎没要求"
+    },
+    {
+      "link": "https://rsi3d.com/doc/render-mode",
+      "title": "收紧像素预算与帧率",
+      "what": "用 `?px=1280x720&fps=15`，或直接让判定自动收紧（推荐后者：它会连几何档一起调）",
+      "when_at_or_below": "client-lite",
+      "why": "像素数和帧率是显存与热墙的主要来源；先降这两项，比重新做场景有效得多"
+    },
+    {
+      "link": "https://rsi3d.com/doc/render-mode",
+      "title": "几何走包围盒代理",
+      "what": "导入时加 `--no-mesh`（不生成 side-car），或让客户端忽略 `mesh_ref`",
+      "when_at_or_below": "client-minimal",
+      "why": "真网格的三角面数是客户端渲染成本的大头；只看空间关系的话，代理盒完全够用"
+    },
+    {
+      "title": "确认这不是软件光栅",
+      "what": "远程桌面 / 虚拟机 / 禁用硬件加速的浏览器里，WebGL 会落到 SwiftShader / llvmpipe",
+      "when_at_or_below": "client-minimal",
+      "why": "软件光栅做 3D 交互基本不可用；换一台带硬件加速的机器比调参有用"
+    },
+    {
+      "title": "无人值守就走 headless",
+      "what": "用 CLI：`rsi3d-harness scene render <doc> --out /tmp/view`，或 `serve` 让它自己落盘",
+      "when_at_or_below": "",
+      "why": "没有屏幕时不必跑浏览器渲染；服务端观测图与帧才是可对账的证据"
+    }
+  ],
+  "modes": [
+    {
+      "allow_software": false,
+      "limits": {
+        "allow_animation": true,
+        "geometry": "real",
+        "max_fps": 60,
+        "max_px": [
+          2560,
+          1600
+        ],
+        "stream": "both"
+      },
+      "min_cores": 4,
+      "min_max_texture": 4096,
+      "min_sustained_fps": 40.0,
+      "min_viewport": [
+        0,
+        0
+      ],
+      "mode": "client-full",
+      "require_gpu": [
+        "webgl2"
+      ],
+      "why": "客户端自己渲真网格、跑满帧率"
+    },
+    {
+      "allow_software": false,
+      "limits": {
+        "allow_animation": true,
+        "geometry": "real",
+        "max_fps": 30,
+        "max_px": [
+          1600,
+          1000
+        ],
+        "stream": "both"
+      },
+      "min_cores": 2,
+      "min_max_texture": 0,
+      "min_sustained_fps": 20.0,
+      "min_viewport": [
+        0,
+        0
+      ],
+      "mode": "client-lite",
+      "require_gpu": [
+        "webgl2",
+        "webgl1"
+      ],
+      "why": "客户端渲，但把像素预算与帧率收紧"
+    },
+    {
+      "allow_software": true,
+      "limits": {
+        "allow_animation": false,
+        "geometry": "aabb-proxy",
+        "max_fps": 10,
+        "max_px": [
+          960,
+          600
+        ],
+        "stream": "both"
+      },
+      "min_cores": 0,
+      "min_max_texture": 0,
+      "min_sustained_fps": 8.0,
+      "min_viewport": [
+        0,
+        0
+      ],
+      "mode": "client-minimal",
+      "require_gpu": [
+        "webgl2",
+        "webgl1"
+      ],
+      "why": "只画包围盒代理、帧率很低——看得懂布局，看不清细节"
+    },
+    {
+      "allow_software": true,
+      "limits": {
+        "allow_animation": false,
+        "geometry": "aabb-proxy",
+        "max_fps": 2,
+        "max_px": [
+          1280,
+          800
+        ],
+        "stream": "frame"
+      },
+      "min_cores": 0,
+      "min_max_texture": 0,
+      "min_sustained_fps": 0.0,
+      "min_viewport": [
+        0,
+        0
+      ],
+      "mode": "frame-only",
+      "require_gpu": [],
+      "why": "本机不渲：只显示服务端渲染出来的帧（对 GPU 几乎没要求）"
+    },
+    {
+      "allow_software": true,
+      "limits": {
+        "allow_animation": false,
+        "geometry": "aabb-proxy",
+        "max_fps": 1,
+        "max_px": [
+          1280,
+          800
+        ],
+        "stream": "none"
+      },
+      "min_cores": 0,
+      "min_max_texture": 0,
+      "min_sustained_fps": 0.0,
+      "min_viewport": [
+        0,
+        0
+      ],
+      "mode": "headless",
+      "require_gpu": [],
+      "why": "没有屏幕（CLI/CI）：不订阅任何流，直接落盘观测图与帧"
+    }
+  ],
+  "note": "渲染模式的规则表。**平台拥有它**（rsi3d.com 的 /api/render/policy 就发这份），客户端离线时用仓库里这一份兜底——两边靠 contract/render-policy.json 与 contract/render-policy.corpus.json 钉住一致。改这里等于改所有部署的判定松紧，所以版本号要跟着动。",
+  "version": "1"
+}

@@ -9,6 +9,7 @@
 //!    `RSI3D_PASSWORD`，避免出现在进程列表里。
 
 mod api;
+mod bundle;
 mod config;
 mod util;
 
@@ -83,9 +84,12 @@ enum Cmd {
     },
     /// 发布制品（业务包 / 服务包 / Harness / 插件 / 技能 / 基准 / 资产）
     Publish {
-        /// 制品文件；与 --url 二选一
+        /// 制品文件；与 --url / --dir 三选一
         #[arg(long, value_name = "PATH")]
         file: Option<PathBuf>,
+        /// 目录：打包成 skill/plugin 包再发布（目录里要有 skill.json / plugin.json）
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
         /// 自托管地址（BYO URL）：不上传字节，只登记地址
         #[arg(long, value_name = "URL")]
         url: Option<String>,
@@ -214,12 +218,26 @@ enum Cmd {
         #[command(subcommand)]
         action: HarnessCmd,
     },
-    /// 安装插件 / 技能到本地
+    /// 安装插件 / 技能到本地（技能包会被解开；--agent 直接落到该 Agent 的技能目录）
     Install {
         reference: String,
         /// 安装根目录（默认 ~/.rsi3d/installed）
         #[arg(long, value_name = "DIR")]
         dir: Option<PathBuf>,
+        /// 直接装进某个 Agent 的技能目录：claude-code | copilot | agents
+        #[arg(long)]
+        agent: Option<String>,
+        /// user（默认）| project
+        #[arg(long, default_value = "user")]
+        scope: String,
+        /// project 作用域下的项目根（默认当前目录）
+        #[arg(long, value_name = "DIR")]
+        project: Option<PathBuf>,
+    },
+    /// 技能包：打包（发布用）
+    Skill {
+        #[command(subcommand)]
+        action: SkillCmd,
     },
     /// 面向各 Agent 的接入形态
     Plugins {
@@ -239,6 +257,26 @@ enum NsCmd {
         slug: String,
         #[arg(long)]
         name: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillCmd {
+    /// 把技能目录打成确定性 zip 包（发布前想看包长什么样就用它）
+    Pack {
+        /// 技能目录（里面要有 skill.json，含 entry/files）
+        dir: PathBuf,
+        /// 输出文件（缺省 <name>.zip）
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+        /// skill | plugin
+        #[arg(long, default_value = "skill")]
+        kind: String,
+    },
+    /// 看一个包里有什么（校验清单与每个条目的校验和；别人的包也能读）
+    Inspect {
+        /// 包文件（.zip）
+        file: PathBuf,
     },
 }
 
@@ -451,6 +489,7 @@ fn dispatch(ctx: &mut Ctx, cmd: Cmd) -> Result<()> {
         },
         Cmd::Publish {
             file,
+            dir,
             url,
             sha256,
             size,
@@ -469,6 +508,7 @@ fn dispatch(ctx: &mut Ctx, cmd: Cmd) -> Result<()> {
             ctx,
             PublishArgs {
                 file,
+                dir,
                 url,
                 sha256,
                 size,
@@ -570,7 +610,17 @@ fn dispatch(ctx: &mut Ctx, cmd: Cmd) -> Result<()> {
                 run,
             } => cmd_harness_feedback(ctx, id, delta, comment, run),
         },
-        Cmd::Install { reference, dir } => cmd_install(ctx, reference, dir),
+        Cmd::Install {
+            reference,
+            dir,
+            agent,
+            scope,
+            project,
+        } => cmd_install(ctx, reference, dir, agent, scope, project),
+        Cmd::Skill { action } => match action {
+            SkillCmd::Pack { dir, out, kind } => cmd_skill_pack(ctx, dir, out, kind),
+            SkillCmd::Inspect { file } => cmd_skill_inspect(ctx, file),
+        },
         Cmd::Plugins { agent } => cmd_plugins(ctx, agent),
     }
 }
@@ -712,6 +762,7 @@ fn cmd_ns_create(ctx: &Ctx, slug: String, name: Option<String>) -> Result<()> {
 
 struct PublishArgs {
     file: Option<PathBuf>,
+    dir: Option<PathBuf>,
     url: Option<String>,
     sha256: Option<String>,
     size: Option<u64>,
@@ -734,6 +785,31 @@ fn cmd_publish(ctx: &Ctx, args: PublishArgs) -> Result<()> {
     let mut bytes: Option<Vec<u8>> = None;
     let mut sha = String::new();
     let mut size: u64 = 0;
+    // 目录打包时带出来的清单（包内单一出处），后面当 manifest 的基座
+    let mut packed: Option<bundle::BundleManifest> = None;
+
+    if let Some(d) = &args.dir {
+        // 目录 → skill/plugin 包。清单在目录里（skill.json / plugin.json），
+        // 打包会顺便校验「清单声明的文件都在、清单没漏掉目录里的文件」。
+        if !matches!(args.kind.as_str(), "skill" | "plugin") {
+            return Err(anyhow!(
+                "--dir 只能用于 skill / plugin（当前 --kind {}）",
+                args.kind
+            ));
+        }
+        let (zip, m) = bundle::pack_dir(d, &args.kind)
+            .with_context(|| format!("打包失败: {}", d.display()))?;
+        ctx.note(format!(
+            "→ 已打包 {} 个文件 → {}（store 无压缩，同内容必得同字节）",
+            m.files.len() + 1,
+            m.name
+        ));
+        sha = sha256_hex(&zip);
+        size = zip.len() as u64;
+        filename = Some(format!("{}.zip", m.name));
+        packed = Some(m);
+        bytes = Some(zip);
+    }
 
     if let Some(p) = &args.file {
         let data = std::fs::read(p).with_context(|| format!("读取文件失败: {}", p.display()))?;
@@ -787,13 +863,15 @@ fn cmd_publish(ctx: &Ctx, args: PublishArgs) -> Result<()> {
 
     // ---- 4. manifest ----
     // 上传的文件本身就是清单（如 pack 产物）时直接沿用它，避免「自动包装」把声明信息丢掉。
-    let mut manifest = match &args.manifest {
-        Some(p) => serde_json::from_str::<Value>(
+    let mut manifest = match (&packed, &args.manifest) {
+        // 包内清单优先：它就是那个「单一出处」，重打一份迟早会与包里的不一致
+        (Some(m), _) => serde_json::to_value(m)?,
+        (None, Some(p)) => serde_json::from_str::<Value>(
             &std::fs::read_to_string(p)
                 .with_context(|| format!("读取 manifest 失败: {}", p.display()))?,
         )
         .with_context(|| format!("manifest 不是合法 JSON: {}", p.display()))?,
-        None => bytes
+        (None, None) => bytes
             .as_ref()
             .and_then(|b| serde_json::from_slice::<Value>(b).ok())
             .filter(|v| v.is_object() && v.get("spec").is_some())
@@ -853,7 +931,7 @@ fn cmd_publish(ctx: &Ctx, args: PublishArgs) -> Result<()> {
             ctx.emit(human, v)
         }
         Err(e) if err_contains(&e, "slug_taken") => {
-            let existing = find_artifact(ctx, args.namespace.as_deref(), &slug, Some(&args.kind))?
+            let existing = find_artifact(ctx, args.namespace.as_deref(), &slug, Some(&args.kind), true)?
                 .ok_or_else(|| {
                     anyhow!(
                         "该 slug 已存在但未能定位到制品（{}）；请确认 --namespace 是否正确",
@@ -1875,43 +1953,188 @@ fn cmd_harness_feedback(
 
 // ---------------------------------------------------------------- 插件与安装
 
-fn cmd_install(ctx: &Ctx, reference: String, dir: Option<PathBuf>) -> Result<()> {
+/// 技能包里期望的清单文件名（按 kind 优先，其次通用名）。
+const BUNDLE_MANIFESTS: [&str; 3] = ["skill.json", "plugin.json", "bundle.json"];
+
+/// 制品类型（与平台 `/api/artifact-kinds` 一致）。
+/// 引用里出现这些词就按「kind/slug」解释，而不是「命名空间/slug」。
+const ARTIFACT_KINDS: [&str; 7] = [
+    "bizpack", "svcpack", "harness", "plugin", "skill", "benchmark", "asset",
+];
+
+/// 从解开的包里找清单并校验。
+fn manifest_of_entries(entries: &[bundle::Entry], kind: &str) -> Result<bundle::BundleManifest> {
+    for want in BUNDLE_MANIFESTS {
+        if let Some(e) = entries.iter().find(|e| e.name == want) {
+            let m: bundle::BundleManifest = serde_json::from_slice(&e.bytes)
+                .with_context(|| format!("{} 不是合法清单", want))?;
+            m.validate(kind)?;
+            return Ok(m);
+        }
+    }
+    Err(anyhow!(
+        "包里没有清单（{:?} 里要有一个）",
+        BUNDLE_MANIFESTS
+    ))
+}
+
+/// `--agent` 的技能目录。路径按各 Agent 公布的约定（VS Code 文档的 skills 表）：
+/// 个人 `~/.claude/skills`、`~/.copilot/skills`、`~/.agents/skills`；
+/// 项目 `.claude/skills`、`.github/skills`、`.agents/skills`。
+fn skill_base(agent: &str, scope: &str, project: Option<&Path>) -> Result<PathBuf> {
+    let a = agent.trim().to_lowercase();
+    let (user_rel, project_rel) = match a.as_str() {
+        "claude" | "claude-code" | "claudecode" => (".claude/skills", ".claude/skills"),
+        "copilot" | "vscode" | "github" => (".copilot/skills", ".github/skills"),
+        "agents" | "agent" | "generic" => (".agents/skills", ".agents/skills"),
+        _ => {
+            return Err(anyhow!(
+                "不认识的 Agent: {}（支持 claude-code / copilot / agents）",
+                agent
+            ))
+        }
+    };
+    match scope.trim() {
+        "" | "user" => {
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .ok_or_else(|| anyhow!("找不到 HOME；用 --dir 指定安装目录"))?;
+            Ok(home.join(user_rel))
+        }
+        "project" => {
+            let root = match project {
+                Some(p) => p.to_path_buf(),
+                None => std::env::current_dir()?,
+            };
+            Ok(root.join(project_rel))
+        }
+        s => Err(anyhow!("--scope 只能是 user / project，实际 {}", s)),
+    }
+}
+
+fn cmd_install(
+    ctx: &Ctx,
+    reference: String,
+    dir: Option<PathBuf>,
+    agent: Option<String>,
+    scope: String,
+    project: Option<PathBuf>,
+) -> Result<()> {
     let art = resolve_artifact(ctx, &reference)?;
     let slug = art["slug"].as_str().unwrap_or("artifact").to_string();
     let kind = art["kind"].as_str().unwrap_or("").to_string();
     if kind != "plugin" && kind != "skill" {
-        ctx.note(format!("! {} 的类型是 {}，不是 plugin/skill，仍继续安装", reference, kind));
+        ctx.note(format!(
+            "! {} 的类型是 {}，不是 plugin/skill，仍继续安装",
+            reference, kind
+        ));
     }
     let expect = art["sha256"].as_str().unwrap_or("").to_string();
     let url = art["url"].as_str().unwrap_or("").to_string();
     if url.is_empty() {
         return Err(anyhow!("{} 没有可下载的字节地址（BYO URL 为空）", reference));
     }
-    let root = dir.unwrap_or_else(|| {
-        config::config_path()
+    // 装到哪：--agent 直接进该 Agent 的技能目录；否则 --dir / ~/.rsi3d/installed
+    let base = match (&agent, &dir) {
+        (Some(a), _) => skill_base(a, &scope, project.as_deref())?,
+        (None, Some(d)) => d.clone(),
+        (None, None) => config::config_path()
             .parent()
             .map(|d| d.join("installed"))
-            .unwrap_or_else(|| PathBuf::from("installed"))
-    });
-    let target_dir = root.join(&slug);
-    std::fs::create_dir_all(&target_dir)?;
-    let dest = target_dir.join(out_filename(&art));
+            .unwrap_or_else(|| PathBuf::from("installed")),
+    };
+    std::fs::create_dir_all(&base).with_context(|| format!("创建目录失败: {}", base.display()))?;
 
+    // 先落到临时文件：要判断这包到底是「一个文件」还是「一个包」，得先看到字节
+    let tmp = base.join(format!(".rsi3d-download-{}.tmp", slug));
     ctx.note(format!("→ 下载 {}", url));
     let (size, got) = api::download_to(
         &ctx.cfg,
         ctx.cfg.token.as_deref(),
-        &format!("/api/artifacts/{}/download", art["id"].as_str().unwrap_or_default()),
-        &dest,
+        &format!(
+            "/api/artifacts/{}/download",
+            art["id"].as_str().unwrap_or_default()
+        ),
+        &tmp,
     )?;
     if !expect.is_empty() && expect != got {
-        let _ = std::fs::remove_file(&dest);
+        let _ = std::fs::remove_file(&tmp);
         return Err(anyhow!(
             "校验和不匹配，安装中止\n  期望 {}\n  实际 {}",
             expect,
             got
         ));
     }
+    let bytes = std::fs::read(&tmp).with_context(|| format!("读回下载文件失败: {}", tmp.display()))?;
+
+    // 是包就解开（skill/plugin 都是包），否则按「单个文件」装（老行为，保持兼容）
+    let is_bundle = bytes.starts_with(b"PK\x03\x04");
+    if is_bundle {
+        let entries = bundle::unzip(&bytes).with_context(|| format!("{} 解包失败", reference))?;
+        let m = manifest_of_entries(&entries, if kind.is_empty() { "skill" } else { &kind })?;
+        // 技能必须落在一个**以技能名命名的目录**里（SKILL.md 的 name 要与目录同名）
+        let target_dir = base.join(&m.name);
+        let files = bundle::unpack(&bytes, &target_dir)?;
+        let entry_path = target_dir.join(&m.entry);
+        if !entry_path.is_file() {
+            return Err(anyhow!(
+                "包里没有入口文件 {}（清单里写的）",
+                m.entry
+            ));
+        }
+        let _ = std::fs::remove_file(&tmp);
+
+        let record = json!({
+            "ref": art["ref"],
+            "kind": kind,
+            "version": art["version"],
+            "sha256": got,
+            "size": size,
+            "bundle": {
+                "name": m.name,
+                "entry": m.entry,
+                "files": m.files,
+                "agents": m.agents,
+            },
+            "target": target_dir.display().to_string(),
+            "installedAt": now_iso8601(),
+        });
+        std::fs::write(
+            target_dir.join("rsi3d-install.json"),
+            format!("{}\n", serde_json::to_string_pretty(&record)?),
+        )?;
+
+        let mut human = format!(
+            "✓ 已安装 {} → {}\n  入口   {}（{} 个文件）\n  校验   {}",
+            art["ref"].as_str().unwrap_or(""),
+            target_dir.display(),
+            entry_path.display(),
+            files.len(),
+            if expect.is_empty() {
+                "制品未登记 sha256".to_string()
+            } else {
+                "sha256 通过".to_string()
+            }
+        );
+        if let Some(a) = &agent {
+            human.push_str(&format!("\n  生效   重启 {a} 会话后可用（技能目录已就位）"));
+        }
+        if let Some(mcp) = m.mcp.as_ref().and_then(|v| v.get("command")).and_then(|v| v.as_str()) {
+            human.push_str(&format!(
+                "\n  建议   把引擎接成 MCP 更省事：{} mcp --root <你的资产目录>",
+                mcp
+            ));
+        }
+        return ctx.emit(human, record);
+    }
+
+    // 单个文件（不是包）
+    let target_dir = base.join(&slug);
+    std::fs::create_dir_all(&target_dir)?;
+    let dest = target_dir.join(out_filename(&art));
+    std::fs::rename(&tmp, &dest).or_else(|_| {
+        std::fs::copy(&tmp, &dest).map(|_| ()).and_then(|_| std::fs::remove_file(&tmp))
+    })?;
 
     let record = json!({
         "ref": art["ref"],
@@ -1939,6 +2162,86 @@ fn cmd_install(ctx: &Ctx, reference: String, dir: Option<PathBuf>) -> Result<()>
             } else {
                 "sha256 通过".to_string()
             }
+        ),
+        record,
+    )
+}
+
+fn cmd_skill_inspect(ctx: &Ctx, file: PathBuf) -> Result<()> {
+    let bytes = std::fs::read(&file).with_context(|| format!("读取失败: {}", file.display()))?;
+    let entries = bundle::unzip(&bytes).with_context(|| format!("{} 不是可读的包", file.display()))?;
+    // 清单在不在、自不自洽（kind 未知时用目录里的清单自己声明的那份来校验）
+    let m = manifest_of_entries(&entries, "skill")
+        .or_else(|_| manifest_of_entries(&entries, "plugin"))?;
+    let total: usize = entries.iter().map(|e| e.bytes.len()).sum();
+    let mut lines = vec![format!(
+        "包 {}（{} 个条目，解开后 {}）",
+        file.display(),
+        entries.len(),
+        human_size(total as u64)
+    )];
+    lines.push(format!(
+        "  清单   {} · {} · {}",
+        m.name,
+        if m.kind.is_empty() { "skill" } else { &m.kind },
+        if m.title.is_empty() { "-" } else { &m.title }
+    ));
+    lines.push(format!("  入口   {}", m.entry));
+    for e in &entries {
+        let mark = if e.name == m.entry { "← 入口" } else { "" };
+        lines.push(format!("  {:>8}  {} {}", human_size(e.bytes.len() as u64), e.name, mark));
+    }
+    // 清单声明了、包里没有 → 这包是坏的，得说出来
+    let missing: Vec<&String> = m
+        .files
+        .iter()
+        .filter(|f| !entries.iter().any(|e| &e.name == *f))
+        .collect();
+    if !missing.is_empty() {
+        return Err(anyhow!(
+            "清单声明了但包里没有：{}",
+            missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    lines.push("  校验   每个条目的 CRC 都过了（store/deflate 都能读）".to_string());
+    let record = json!({
+        "name": m.name,
+        "kind": m.kind,
+        "entry": m.entry,
+        "files": entries.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
+        "bytes": bytes.len(),
+        "sha256": sha256_hex(&bytes),
+    });
+    ctx.emit(lines.join("\n"), record)
+}
+
+/// 只打包不发网络：发布前想看包长什么样、或手工上传时用。
+fn cmd_skill_pack(ctx: &Ctx, dir: PathBuf, out: Option<PathBuf>, kind: String) -> Result<()> {
+    let (zip, m) = bundle::pack_dir(&dir, &kind)
+        .with_context(|| format!("打包失败: {}", dir.display()))?;
+    let dest = out.unwrap_or_else(|| PathBuf::from(format!("{}.zip", m.name)));
+    std::fs::write(&dest, &zip).with_context(|| format!("写包失败: {}", dest.display()))?;
+    let sha = sha256_hex(&zip);
+    let record = json!({
+        "name": m.name,
+        "kind": kind,
+        "entry": m.entry,
+        "files": m.files,
+        "sha256": sha,
+        "size": zip.len(),
+        "file": dest.display().to_string(),
+    });
+    ctx.emit(
+        format!(
+            "✓ 已打包 {} → {}\n  入口   {}\n  文件   {} 个（{}）\n  sha256 {}\n  发布   rsi3d publish --dir {} --kind {}",
+            m.name,
+            dest.display(),
+            m.entry,
+            m.files.len() + 1,
+            human_size(zip.len() as u64),
+            sha,
+            dir.display(),
+            kind
         ),
         record,
     )
@@ -1975,12 +2278,20 @@ impl Ctx {
 }
 
 /// 找到制品：限定命名空间（可选）与 slug（精确），返回完整详情（含 versions）。
-fn find_artifact(ctx: &Ctx, ns: Option<&str>, slug: &str, kind: Option<&str>) -> Result<Option<Value>> {
+fn find_artifact(
+    ctx: &Ctx,
+    ns: Option<&str>,
+    slug: &str,
+    kind: Option<&str>,
+    mine: bool,
+) -> Result<Option<Value>> {
     let mut qs = vec![
         format!("q={}", urlencode(slug)),
-        "mine=1".to_string(),
         "limit=200".to_string(),
     ];
+    if mine {
+        qs.push("mine=1".to_string());
+    }
     if let Some(n) = ns {
         qs.push(format!("namespace={}", urlencode(n)));
     }
@@ -2017,12 +2328,27 @@ fn resolve_artifact(ctx: &Ctx, reference: &str) -> Result<Value> {
     }
     if let Some(rest) = r.strip_prefix('@') {
         let (ns, slug) = split_ref(rest)?;
-        return find_artifact(ctx, Some(&ns), &slug, None)?
+        return find_artifact(ctx, Some(&ns), &slug, None, false)?
             .ok_or_else(|| anyhow!("未找到制品 @{}/{}", ns, slug));
+    }
+    // kind/slug：插件页与文档里给的就是这种写法（skill/rsi3d、plugin/foo）。
+    // 注意要放在「裸 ns/slug」之前判，否则会把 skill 当成一个命名空间。
+    if let Some((head, tail)) = r.split_once('/') {
+        if ARTIFACT_KINDS.contains(&head) {
+            if let Some(a) = find_artifact(ctx, None, tail, Some(head), false)? {
+                return Ok(a);
+            }
+            return Err(anyhow!(
+                "未找到 {} / {}（试试 rsi3d search --kind {}）",
+                head,
+                tail,
+                head
+            ));
+        }
     }
     if r.contains('/') {
         let (ns, slug) = split_ref(r)?;
-        return find_artifact(ctx, Some(&ns), &slug, None)?
+        return find_artifact(ctx, Some(&ns), &slug, None, false)?
             .ok_or_else(|| anyhow!("未找到制品 {}/{}", ns, slug));
     }
     if r.starts_with("A-") {
@@ -2032,28 +2358,30 @@ fn resolve_artifact(ctx: &Ctx, reference: &str) -> Result<Value> {
         }
         return Err(anyhow!("制品不存在: {}", r));
     }
-    // 裸 slug：全局精确匹配，避免把歧义当命中
-    let v = ctx.api_get(&format!("/api/artifacts?q={}&limit=200&mine=1", urlencode(r)))?;
-    let items = v["artifacts"].as_array().cloned().unwrap_or_default();
-    if let Some(hit) = items.iter().find(|a| a["slug"].as_str() == Some(r)) {
-        let id = hit["id"].as_str().unwrap_or_default().to_string();
-        let full = ctx.api_get(&format!("/api/artifacts/{}", id))?;
-        return Ok(full.get("artifact").cloned().unwrap_or_else(|| hit.clone()));
+    // 裸 slug：自己的优先（可能还没公开），再回到公共目录
+    for mine in [true, false] {
+        let mine_q = if mine { "&mine=1" } else { "" };
+        let v = ctx.api_get(&format!("/api/artifacts?q={}&limit=200{}", urlencode(r), mine_q))?;
+        let items = v["artifacts"].as_array().cloned().unwrap_or_default();
+        if let Some(hit) = items.iter().find(|a| a["slug"].as_str() == Some(r)) {
+            let id = hit["id"].as_str().unwrap_or_default().to_string();
+            let full = ctx.api_get(&format!("/api/artifacts/{}", id))?;
+            return Ok(full.get("artifact").cloned().unwrap_or_else(|| hit.clone()));
+        }
+        if items.len() == 1 {
+            let id = items[0]["id"].as_str().unwrap_or_default().to_string();
+            let full = ctx.api_get(&format!("/api/artifacts/{}", id))?;
+            return Ok(full.get("artifact").cloned().unwrap_or_else(|| items[0].clone()));
+        }
+        if items.len() > 1 {
+            return Err(anyhow!(
+                "{} 匹配到多个制品（{} 个），请用 @ns/slug 明确指定",
+                r,
+                items.len()
+            ));
+        }
     }
-    if items.len() == 1 {
-        let id = items[0]["id"].as_str().unwrap_or_default().to_string();
-        let full = ctx.api_get(&format!("/api/artifacts/{}", id))?;
-        return Ok(full.get("artifact").cloned().unwrap_or_else(|| items[0].clone()));
-    }
-    if items.is_empty() {
-        Err(anyhow!("未找到制品 {}（试试 rsi3d search）", r))
-    } else {
-        Err(anyhow!(
-            "{} 匹配到多个制品（{} 个），请用 @ns/slug 明确指定",
-            r,
-            items.len()
-        ))
-    }
+    Err(anyhow!("未找到制品 {}（试试 rsi3d search）", r))
 }
 
 /// 解析 Harness：`H-xxx` / `@ns/slug` / 裸 slug。

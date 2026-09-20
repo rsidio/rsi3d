@@ -21,5 +21,7 @@ serde_json.workspace = true
 sha2.workspace = true
 # 平台调用（只走公开 HTTP API，不 import 任何平台私有代码）
 ureq.workspace = true
+# skill/plugin 包：store 写、store+deflate 读
+flate2.workspace = true
 
 # 注：`[profile.release]`（strip + lto）定义在 workspace 根，见 ../Cargo.toml

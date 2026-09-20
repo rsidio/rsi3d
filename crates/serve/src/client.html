@@ -40,6 +40,13 @@
   }
   #frame-meta b { color: var(--fg); font-weight: 600; }
   #scene-note { position: absolute; left: 10px; right: 10px; bottom: 10px; color: var(--dim); }
+  /* GPU 上下文丢失是必须一直看得见的事实，不能只闪一下 */
+  .gpu-note { position: absolute; left: 10px; right: 10px; top: 26px; z-index: 2;
+              color: var(--fg); background: rgba(14,17,22,.86); border: 1px solid var(--line);
+              border-radius: 5px; padding: 6px 8px; font-size: 12px; }
+  .gpu-note:empty { display: none; }
+  .gpu-note.bad { border-color: var(--bad); }
+  .gpu-note.ok { border-color: var(--ok); }
   footer {
     border-top: 1px solid var(--line); background: var(--panel); padding: 10px 14px;
     display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
@@ -69,6 +76,9 @@
   <span class="spacer"></span>
   <span class="stat">rev <b id="rev">–</b></span>
   <span class="stat">hash <b id="hash">–</b></span>
+  <span class="stat">能力 <b id="caps">–</b></span>
+  <span class="stat">几何 <b id="mesh-note">–</b></span>
+  <span class="stat">模式 <b id="sc-mode">–</b></span>
   <span class="stat" id="conns"></span>
 </header>
 
@@ -76,6 +86,8 @@
   <section id="scene-pane">
     <div class="label">场景流 · 客户端渲染（可自由旋转，不消耗服务端算力）</div>
     <canvas id="c"></canvas>
+    <div id="gpu-note" class="gpu-note"></div>
+    <div id="verdict" class="gpu-note"></div>
     <div id="scene-note"></div>
   </section>
   <section id="frame-pane">
@@ -85,6 +97,7 @@
       <span>视角 <b id="f-view">–</b></span>
       <span>rev <b id="f-rev">–</b></span>
       <span>sha <b id="f-hash">–</b></span>
+      <span>档 <b id="f-render">–</b></span>
       <span>挡光带被遮挡 <b id="f-occ">–</b></span>
       <span>帧 <b id="f-count">0</b></span>
     </div>

@@ -1,0 +1,266 @@
+{
+  "spec": "rsi3d-render-policy-corpus/v1",
+  "note": "渲染模式判定的**行为语料**：同一份用例，Rust（harness 离线兜底）与 Go（rsi3d.com 上的权威判定）各跑一遍，结论必须一致。没有这份语料，'服务端算'和'离线算'就是两套阈值，迟早对不上。",
+  "cases": [
+    {
+      "name": "强机：10 核 + WebGL2 + 58fps + 1920×1080",
+      "profile": {
+        "agent": "rsi3d-web/0.1.0",
+        "form": "screen",
+        "gpu": {
+          "api": "webgl2",
+          "webgpu": true,
+          "max_texture": 16384
+        },
+        "cpu": {
+          "cores": 10,
+          "memory_gb": 16,
+          "platform": "macos"
+        },
+        "display": {
+          "viewport": [
+            1920,
+            1080
+          ],
+          "dpr": 2,
+          "refresh_hz": 60
+        },
+        "bench": {
+          "sustained_fps": 58,
+          "frames": 116,
+          "fillrate_mpx": 900,
+          "triangles_mps": 42,
+          "ms": 2000
+        },
+        "privacy": "hashed"
+      },
+      "expect": {
+        "mode": "client-full",
+        "geometry": "real",
+        "stream": "both",
+        "max_fps": 60,
+        "has_fallbacks": false
+      }
+    },
+    {
+      "name": "只有 WebGL1、25fps：降一档而不是打回图像流",
+      "profile": {
+        "agent": "rsi3d-web/0.1.0",
+        "form": "screen",
+        "gpu": {
+          "api": "webgl1",
+          "max_texture": 4096
+        },
+        "cpu": {
+          "cores": 4,
+          "platform": "windows"
+        },
+        "display": {
+          "viewport": [
+            1440,
+            900
+          ],
+          "dpr": 1
+        },
+        "bench": {
+          "sustained_fps": 25,
+          "frames": 50,
+          "ms": 2000
+        },
+        "privacy": "hashed"
+      },
+      "expect": {
+        "mode": "client-lite",
+        "geometry": "real",
+        "stream": "both",
+        "max_fps": 30,
+        "has_fallbacks": true
+      }
+    },
+    {
+      "name": "瘦客户端：2 核 + 软件光栅 + 9fps + 640×480",
+      "profile": {
+        "agent": "rsi3d-web/0.1.0",
+        "form": "screen",
+        "gpu": {
+          "api": "webgl1",
+          "max_texture": 2048,
+          "software": true
+        },
+        "cpu": {
+          "cores": 2,
+          "platform": "windows"
+        },
+        "display": {
+          "viewport": [
+            640,
+            480
+          ],
+          "dpr": 1
+        },
+        "bench": {
+          "sustained_fps": 9,
+          "frames": 18,
+          "ms": 2000
+        },
+        "privacy": "hashed"
+      },
+      "expect": {
+        "mode": "client-minimal",
+        "geometry": "aabb-proxy",
+        "stream": "both",
+        "max_fps": 10,
+        "has_fallbacks": true
+      }
+    },
+    {
+      "name": "GPU 接口未知（命令行上报）：渲染能力不能靠猜 → 退回图像流",
+      "profile": {
+        "agent": "rsi3d-cli/0.1.0",
+        "form": "screen",
+        "cpu": {
+          "cores": 8,
+          "platform": "linux"
+        },
+        "privacy": "omitted"
+      },
+      "expect": {
+        "mode": "frame-only",
+        "geometry": "aabb-proxy",
+        "stream": "frame",
+        "has_fallbacks": true
+      }
+    },
+    {
+      "name": "无屏形态：headless，不订阅任何流",
+      "profile": {
+        "agent": "rsi3d-harness/0.1.0",
+        "form": "headless",
+        "cpu": {
+          "cores": 16,
+          "platform": "linux"
+        },
+        "privacy": "omitted"
+      },
+      "expect": {
+        "mode": "headless",
+        "stream": "none",
+        "max_fps": 1,
+        "has_fallbacks": true
+      }
+    },
+    {
+      "name": "数值参数全未知但 WebGL2 可用：**不许**因为读不到就判低档",
+      "profile": {
+        "agent": "rsi3d-web/0.1.0",
+        "form": "screen",
+        "gpu": {
+          "api": "webgl2"
+        },
+        "privacy": "hashed"
+      },
+      "expect": {
+        "mode": "client-full",
+        "geometry": "real",
+        "stream": "both",
+        "max_fps": 60,
+        "reason_contains": "未知"
+      }
+    },
+    {
+      "name": "硬件够强但没跑基准：仍给满档，但必须标注'可能偏乐观'",
+      "profile": {
+        "agent": "rsi3d-web/0.1.0",
+        "form": "screen",
+        "gpu": {
+          "api": "webgl2",
+          "max_texture": 8192
+        },
+        "cpu": {
+          "cores": 8,
+          "platform": "macos"
+        },
+        "display": {
+          "viewport": [
+            1680,
+            1050
+          ],
+          "dpr": 2
+        },
+        "privacy": "hashed"
+      },
+      "expect": {
+        "mode": "client-full",
+        "reason_contains": "偏乐观"
+      }
+    },
+    {
+      "name": "硬件光栅被禁（远程桌面常见）：8 核也进不了满档",
+      "profile": {
+        "agent": "rsi3d-web/0.1.0",
+        "form": "screen",
+        "gpu": {
+          "api": "webgl2",
+          "max_texture": 16384,
+          "software": true
+        },
+        "cpu": {
+          "cores": 8,
+          "platform": "windows"
+        },
+        "display": {
+          "viewport": [
+            1920,
+            1080
+          ],
+          "dpr": 1
+        },
+        "bench": {
+          "sustained_fps": 55,
+          "frames": 110,
+          "ms": 2000
+        },
+        "privacy": "hashed"
+      },
+      "expect": {
+        "mode": "client-minimal",
+        "geometry": "aabb-proxy",
+        "missing_contains": "软件光栅"
+      }
+    },
+    {
+      "name": "强机但窗口很小：窗口尺寸不是机器能力，仍是满档",
+      "profile": {
+        "agent": "rsi3d-web/0.1.0",
+        "form": "screen",
+        "gpu": {
+          "api": "webgl2",
+          "max_texture": 16384
+        },
+        "cpu": {
+          "cores": 8,
+          "platform": "macos"
+        },
+        "display": {
+          "viewport": [
+            640,
+            480
+          ],
+          "dpr": 2
+        },
+        "bench": {
+          "sustained_fps": 55,
+          "frames": 110,
+          "ms": 2000
+        },
+        "privacy": "hashed"
+      },
+      "expect": {
+        "mode": "client-full",
+        "geometry": "real",
+        "stream": "both",
+        "max_fps": 60
+      }
+    }
+  ]
+}

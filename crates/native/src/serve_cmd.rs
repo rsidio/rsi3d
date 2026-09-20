@@ -16,6 +16,32 @@ use rsi3d_harness_stream as stream;
 
 use crate::{emit, load_document, Cli};
 
+/// 读与文档同名的几何 side-car（`<stem>.mesh.glb`）。
+///
+/// 命名规则与 `scene import` 写出来的一致——**同一目录、同一前缀**，所以这里不用任何配置，
+/// 也不需要场景里写路径（场景里的 `mesh_ref` 只是文件名，不参与寻址）。
+///
+/// 读不到 / 不是 GLB 一律返回 `None`：这条链上"没有真网格"是正常状态（手搭场景就是），
+/// 不该让 `serve` 起不来。
+fn load_mesh_sidecar(doc: &Path) -> Option<Vec<u8>> {
+    let stem = doc.file_stem()?.to_string_lossy().to_string();
+    let sidecar = doc.with_file_name(format!("{}.mesh.glb", stem));
+    let bytes = std::fs::read(&sidecar).ok()?;
+    if bytes.len() < 12 || &bytes[0..4] != b"glTF" {
+        eprintln!(
+            "⚠ {} 不是 GLB（magic 不对），忽略：浏览器会画包围盒代理",
+            sidecar.display()
+        );
+        return None;
+    }
+    eprintln!(
+        "几何 side-car：{}（{} KB，浏览器据此显示真网格）",
+        sidecar.display(),
+        bytes.len() / 1024
+    );
+    Some(bytes)
+}
+
 /// 启动转流服务。
 ///
 /// 安全默认：只绑回环 + 必须带一次性 token。绑到非回环地址时**大声警告**，
@@ -28,6 +54,7 @@ pub(crate) fn cmd_serve(
     fps: u32,
     token: Option<&str>,
     open: bool,
+    policy: Option<&Path>,
 ) -> Result<()> {
     let doc = load_document(file)?;
     let mut opts = serve::ServeOptions::new(doc)
@@ -42,6 +69,28 @@ pub(crate) fn cmd_serve(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "scene".to_string());
     opts.name = name;
+
+    // 几何 side-car：与文档同名的 `<stem>.mesh.glb`。
+    // 有就带上（浏览器能把包围盒换成真网格），没有就什么都不说——**不是错误**：
+    // 手搭的场景本来就没有几何文件。
+    if let Some(bytes) = load_mesh_sidecar(file) {
+        opts = opts.with_mesh(bytes);
+    }
+
+    // 判定用的规则表：给了就用它（平台 `/api/render/policy` 发的那份），
+    // 没给就用内置的——**同一条链**，不是两套阈值。
+    if let Some(p) = policy {
+        let text = std::fs::read_to_string(p)
+            .with_context(|| format!("读不到规则表 {}", p.display()))?;
+        let parsed: rsi3d_harness_stream::render_mode::RenderPolicy = serde_json::from_str(&text)
+            .with_context(|| format!("{} 不是合法的规则表", p.display()))?;
+        eprintln!(
+            "渲染模式规则表：{}（版本 {}）——/capability 用它判定",
+            p.display(),
+            parsed.version
+        );
+        opts = opts.with_policy(parsed);
+    }
 
     let handle = serve::serve(opts).map_err(|e| anyhow::anyhow!(e))?;
     let base = handle.base_url();
@@ -147,11 +196,26 @@ pub(crate) fn cmd_stream(
     let mut attempt: u32 = 0;
 
     'outer: loop {
-        let path = serve::peer::stream_path(
+        // 命令行客户端老实声明自己是什么：没有屏幕，只能消费流（不能自己渲染、
+        // 也不会处理 GPU 上下文丢失——它根本没有 GPU）。服务端据此知道对面是谁。
+        let client = stream::ClientDeclaration {
+            agent: format!("rsi3d-cli/{}", env!("CARGO_PKG_VERSION")),
+            capabilities: vec![
+                "headless".to_string(),
+                match kind {
+                    stream::StreamKind::Scene => "scene".to_string(),
+                    stream::StreamKind::Frame => "image".to_string(),
+                },
+            ],
+            // 不声明显示预算：命令行落盘，要的就是服务端默认档
+            frame_budget: None,
+        };
+        let path = serve::peer::stream_path_with_client(
             kind,
             if kind == stream::StreamKind::Frame { Some(view) } else { None },
             token,
             resumed_from,
+            &client,
         );
         let mut peer = match serve::peer::connect_with_timeout(
             url,
@@ -266,8 +330,15 @@ pub(crate) fn cmd_stream(
                         changes["blockers"]
                     ));
                 }
-                stream::ServerMessage::Frame { revision, view, image_hash, png_base64, band_occlusion, .. } => {
+                stream::ServerMessage::Frame { revision, view, renderer, image_hash, png_base64, band_occlusion, .. } => {
                     frames += 1;
+                    // 落盘的帧必须能说清"谁渲的、能不能当证据"：非证据档就当场说出来，
+                    // 而不是让人以后拿它去对账时才发现对不上
+                    let grade = if stream::is_evidence_renderer(&renderer) {
+                        format!("{}（证据档）", renderer)
+                    } else {
+                        format!("{}（**非证据档**：不可复现，不得用于验收）", renderer)
+                    };
                     if let Some(dir) = out {
                         let p = dir.join(format!("frame-{:04}.png", frames));
                         let bytes = stream::session::decode_b64(png_base64)
@@ -275,10 +346,11 @@ pub(crate) fn cmd_stream(
                         std::fs::write(&p, bytes)
                             .with_context(|| format!("写不到 {}", p.display()))?;
                         lines.push(format!(
-                            "帧 #{} rev {} {} · sha {} · 遮挡 {} → {}",
+                            "帧 #{} rev {} {} · {} · sha {} · 遮挡 {} → {}",
                             frames,
                             revision,
                             view,
+                            grade,
                             &image_hash[..8],
                             band_occlusion
                                 .map(|o| format!("{:.0}%", o * 100.0))
@@ -286,7 +358,7 @@ pub(crate) fn cmd_stream(
                             p.display()
                         ));
                     } else {
-                        lines.push(format!("帧 #{} rev {} {}", frames, revision, view));
+                        lines.push(format!("帧 #{} rev {} {} · {}", frames, revision, view, grade));
                     }
                 }
                 stream::ServerMessage::Pong { nonce } => lines.push(format!("pong {}", nonce)),

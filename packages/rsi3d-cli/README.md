@@ -1,20 +1,28 @@
 # @rsi3d/cli
 
-> rsi3d 官方命令行 + 3D 资产 Agentic 引擎的 npm 入口。装了它，`rsi3d` 与 `rsi3d-harness` 两个命令都能用。
+> npm entry point for the rsi3d command line and the `rsi3d-harness` 3D asset engine.
+> One install, two commands.
 
 ```bash
-npx @rsi3d/cli rsi3d-harness --help     # 引擎
-npx @rsi3d/cli rsi3d --help             # 平台客户端
+npx @rsi3d/cli rsi3d-harness --help     # the engine
+npx @rsi3d/cli rsi3d --help             # the platform client
 ```
 
-## 两个命令分别干什么
+Or install it globally:
 
-| 命令 | 用途 |
+```bash
+npm i -g @rsi3d/cli
+rsi3d-harness scene show scene.json
+```
+
+## What the two commands do
+
+| Command | Purpose |
 | --- | --- |
-| `rsi3d-harness` | **引擎**：`mcp`（给 VS Code / Cursor / Claude Code 当工具）· `scene`（观察/编辑/回滚/渲染/校验）· `scaffold`（生成你自己的 3D 资产系统与 Agent） |
-| `rsi3d` | **平台客户端**：发布 / 检索 / 下载 / 验签 / 打包 / 驱动 Run |
+| `rsi3d-harness` | **Engine**: `mcp` (expose the engine's tools to VS Code / Cursor / Claude Code) · `scene` (observe / edit / rollback / render / verify / export / import) · `serve` + `stream` (live scene + image streams) · `scaffold` (generate your own 3D-asset agent or plugin) · `contract` · `render-mode` |
+| `rsi3d` | **Platform client**: publish / search / download / verify / pack / drive a Run / install skills |
 
-在 VS Code 里用（`.vscode/mcp.json`）：
+Using it from VS Code (`.vscode/mcp.json`):
 
 ```json
 {
@@ -28,28 +36,37 @@ npx @rsi3d/cli rsi3d --help             # 平台客户端
 }
 ```
 
-## 二进制从哪来
+Cursor and Claude Code use the same fields under an `mcpServers` key. The engine also ships an
+[Agent Skill](https://github.com/rsidio/rsi3d) that teaches a model the tools and the discipline:
+`rsi3d install skill/rsi3d-harness --agent claude-code`.
 
-这个包**默认只带启动器**，不带二进制。`bin/launcher.js` 按下面的顺序找（先本地、后远端，绝不静默换来源）：
+## Where the binaries come from
 
-1. `RSI3D_BIN` / `RSI3D_HARNESS_BIN`（显式指定）
-2. 仓库内构建产物 `rsi3d-harness/target/release/<name>`（单仓开发场景）
-3. `~/.rsi3d/bin/<name>`（之前装过的）
-4. 包内 `vendor/<platform>-<arch>/<name>`
-5. 从 `RSI3D_RELEASE_BASE` 下载到 `~/.rsi3d/bin/`（默认 GitHub Releases）
+This package **ships a small launcher, not the binaries.** `bin/launcher.js` resolves them in this
+order — local first, remote last, and it never silently switches source:
 
-为什么不在包里直接带二进制：平台矩阵 ×2 个二进制会让**所有人**为别人的平台付下载成本。
-预编译产物走 npm [optionalDependencies](https://docs.npmjs.com/cli/v10/configuring-npm/package-json#optionaldependencies)
-的平台包（`@rsi3d/cli-<platform>-<arch>`）分发——那是下一步。
+1. `RSI3D_BIN` / `RSI3D_HARNESS_BIN` (explicit; a broken path fails loudly instead of falling back)
+2. a build in the repo (`target/release/<name>`) — the single-repo development case
+3. `~/.rsi3d/bin/<name>` (previously installed)
+4. `vendor/<platform>-<arch>/<name>` inside the package
+5. download from `RSI3D_RELEASE_BASE` (GitHub Releases by default) into `~/.rsi3d/bin/`, verified
+   against `checksums.txt`
 
-## 只想用源码
+Why not bundle the binaries: two binaries times a platform matrix would make **everyone** pay for
+everyone else's platform. Prebuilt artifacts as npm `optionalDependencies`
+(`@rsi3d/cli-<platform>-<arch>`) are the next step.
+
+## Just want the source
 
 ```bash
-git clone https://github.com/rsi3d/rsi3d && cd rsi3d/rsi3d-harness
-cargo build --release        # 一次出两个二进制，共用 target/
+git clone https://github.com/rsidio/rsi3d.git && cd rsi3d
+cargo build --release        # both binaries, one target/ directory
 ./target/release/rsi3d-harness --help
 ```
 
-## 许可
+The engine is a Rust workspace with no required system dependencies beyond a toolchain; the scene
+kernel, the renderer and the stream server all work offline.
 
-Apache-2.0。
+## License
+
+Apache-2.0.

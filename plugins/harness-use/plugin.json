@@ -1,0 +1,20 @@
+{
+  "spec": "rsi3d-bundle/v1",
+  "name": "harness-use-rsi3d",
+  "kind": "plugin",
+  "title": "RSI 3D · harness-use 功能应用",
+  "summary": "把 rsi3d 接进 harness-use：身份绑定 / 发布制品 / 检索与消费 / 最近 Run。插件只是客户端——不合并账号、凭据不出本机、3D 数据不过平台。",
+  "entry": "README.md",
+  "agents": ["harness-use"],
+  "files": [
+    "README.md",
+    "Rsi3dPage.tsx",
+    "integrate.sh",
+    "rsi3d.ts"
+  ],
+  "install": {
+    "kind": "source-contribution",
+    "reason": "harness-use 宿主暂无动态加载器：插件 = 编译期贡献的页面组件，「安装」= 写一条本地记录。所以 v1 只能源码接入。",
+    "how": "bash integrate.sh <harnessuse>/agent 然后 npm run build"
+  }
+}

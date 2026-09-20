@@ -1,0 +1,483 @@
+{
+  "$comment": "由 `#[derive(JsonSchema)]` 从 rsi3d-harness 的 Rust 类型**派生**（schemars）。`x-known-keys` 是喂给镜像门禁的键清单（仍从样例派生，两者一致性由 `typed_schema_covers_the_observed_inventory` 钉住）。重新生成：`rsi3d-harness contract --out contract`。",
+  "$defs": {
+    "Aabb": {
+      "description": "轴对齐包围盒（H0 的几何代理）。",
+      "properties": {
+        "max": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "min": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "type": "object"
+    },
+    "ClearanceRule": {
+      "additionalProperties": true,
+      "description": "间距规则：**行业知识被显式化的地方**（太远和太近都算违规）。",
+      "properties": {
+        "max": {
+          "format": "double",
+          "type": "number"
+        },
+        "min": {
+          "format": "double",
+          "type": "number"
+        },
+        "pair": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pair",
+        "min",
+        "max"
+      ],
+      "type": "object"
+    },
+    "Editability": {
+      "description": "可编辑程度。**由层推导，不单独存**（避免两处真相）。",
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "可局部编辑",
+          "type": "string"
+        },
+        {
+          "const": "crop-only",
+          "description": "只能裁剪 / 整体替换（高斯、点云的常见处境）",
+          "type": "string"
+        },
+        {
+          "const": "replace-only",
+          "description": "只能整体替换（重训产物）",
+          "type": "string"
+        }
+      ]
+    },
+    "IntentKeyword": {
+      "description": "意图关键词核查（H0 的语义维度）",
+      "properties": {
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "present": {
+          "default": false,
+          "type": "boolean"
+        },
+        "word": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "word"
+      ],
+      "type": "object"
+    },
+    "LayerKind": {
+      "description": "表示层：同一节点的不同承载方式（对应 glTF 同一 node 的不同 primitive）。",
+      "oneOf": [
+        {
+          "const": "mesh",
+          "description": "三角网格",
+          "type": "string"
+        },
+        {
+          "const": "gaussian",
+          "description": "3D 高斯（`KHR_gaussian_splatting`）",
+          "type": "string"
+        },
+        {
+          "const": "points",
+          "description": "点云",
+          "type": "string"
+        },
+        {
+          "const": "light",
+          "description": "光源（挂在节点上时）",
+          "type": "string"
+        },
+        {
+          "const": "camera",
+          "description": "相机",
+          "type": "string"
+        }
+      ]
+    },
+    "Light": {
+      "additionalProperties": true,
+      "description": "灯光。",
+      "properties": {
+        "color": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "direction": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "intensity": {
+          "default": 1.0,
+          "format": "double",
+          "type": "number"
+        },
+        "kind": {
+          "default": "directional",
+          "description": "`directional` | `hdri` | …（开放）",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "MaterialParams": {
+      "description": "材质数值参数（H0 只需要这几个）。",
+      "properties": {
+        "metallic": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "opacity": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "roughness": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "NodeView": {
+      "description": "节点在视图里的样子。",
+      "properties": {
+        "aabb": {
+          "$ref": "#/$defs/Aabb",
+          "description": "H0 是世界空间几何代理（评测规则直接读它算间距/遮挡）"
+        },
+        "editability": {
+          "$ref": "#/$defs/Editability",
+          "description": "该节点实际可编辑到什么程度（**诚实声明**，见 `docs/core.md` §3.2）"
+        },
+        "id": {
+          "type": "string"
+        },
+        "layers": {
+          "items": {
+            "$ref": "#/$defs/LayerKind"
+          },
+          "type": "array"
+        },
+        "material": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "material_params": {
+          "$ref": "#/$defs/MaterialParams"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "aabb",
+        "layers",
+        "editability"
+      ],
+      "type": "object"
+    },
+    "Room": {
+      "additionalProperties": true,
+      "description": "房间。",
+      "properties": {
+        "ceiling": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "size": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "wallColor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "size"
+      ],
+      "type": "object"
+    },
+    "Window": {
+      "additionalProperties": true,
+      "description": "窗（H0 单窗；与已发布模板的 `window` 键一致）。",
+      "properties": {
+        "bandDepth": {
+          "default": 1.5,
+          "description": "窗前多少米内算「挡光带」",
+          "format": "double",
+          "type": "number"
+        },
+        "height": {
+          "format": "double",
+          "type": "number"
+        },
+        "spanX": {
+          "description": "窗在 X 轴上的跨度 [x0, x1]",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "wall": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "z": {
+          "description": "窗所在平面的 Z 坐标",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "spanX",
+        "height",
+        "z"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "场景视图：评测与 Agent 观测的直接输入。",
+  "properties": {
+    "blockers": {
+      "description": "落在窗前挡光带里的节点（Agent 修「挡光」时最需要的事实）",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "clearance_rules": {
+      "items": {
+        "$ref": "#/$defs/ClearanceRule"
+      },
+      "type": "array"
+    },
+    "intent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "intent_keywords": {
+      "items": {
+        "$ref": "#/$defs/IntentKeyword"
+      },
+      "type": "array"
+    },
+    "lights": {
+      "items": {
+        "$ref": "#/$defs/Light"
+      },
+      "type": "array"
+    },
+    "object_count": {
+      "description": "规模摘要（对应 `observe.summary` 的用途）",
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "objects": {
+      "items": {
+        "$ref": "#/$defs/NodeView"
+      },
+      "type": "array"
+    },
+    "room": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Room"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "solid_count": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "spec": {
+      "type": "string"
+    },
+    "units": {
+      "type": "string"
+    },
+    "window": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Window"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "spec",
+    "units",
+    "objects",
+    "object_count",
+    "solid_count"
+  ],
+  "title": "rsi3d scene view",
+  "type": "object",
+  "x-known-keys": [
+    "aabb",
+    "bandDepth",
+    "blockers",
+    "ceiling",
+    "clearance_rules",
+    "clearance_rules.max",
+    "clearance_rules.min",
+    "clearance_rules.pair",
+    "clearance_rules.reason",
+    "color",
+    "direction",
+    "editability",
+    "height",
+    "id",
+    "intensity",
+    "intent",
+    "intent_keywords",
+    "intent_keywords.note",
+    "intent_keywords.present",
+    "intent_keywords.word",
+    "kind",
+    "layers",
+    "lights",
+    "lights.color",
+    "lights.direction",
+    "lights.id",
+    "lights.intensity",
+    "lights.kind",
+    "material",
+    "material_params",
+    "max",
+    "metallic",
+    "min",
+    "note",
+    "object_count",
+    "objects",
+    "objects.aabb",
+    "objects.aabb.max",
+    "objects.aabb.min",
+    "objects.editability",
+    "objects.id",
+    "objects.layers",
+    "objects.material",
+    "objects.material_params",
+    "objects.material_params.metallic",
+    "objects.material_params.opacity",
+    "objects.material_params.roughness",
+    "objects.role",
+    "opacity",
+    "pair",
+    "present",
+    "reason",
+    "role",
+    "room",
+    "room.ceiling",
+    "room.size",
+    "room.wallColor",
+    "roughness",
+    "size",
+    "solid_count",
+    "spanX",
+    "spec",
+    "units",
+    "wall",
+    "wallColor",
+    "window",
+    "window.bandDepth",
+    "window.height",
+    "window.spanX",
+    "window.wall",
+    "window.z",
+    "word",
+    "z"
+  ]
+}

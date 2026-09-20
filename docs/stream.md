@@ -109,6 +109,36 @@
 - **几何档次如实声明**：H0 还没有真网格，所以 `welcome.geometry` 和每个节点的
   `extras.rsi3d.geometry` 都写着 `aabb-proxy`。客户端不会误以为收到了真模型。
 
+### 每一帧都要自报家门：谁渲的、能不能当证据
+
+`frame` 消息里有一个 `renderer` 字段：
+
+```json
+{ "type": "frame", "revision": 3, "view": "top", "width": 480, "height": 360,
+  "renderer": "cpu-raster/v1", "image_hash": "…", "png_base64": "…", "band_occlusion": 0.5 }
+```
+
+- `cpu-raster/v1` —— 本引擎的确定性软件光栅（**唯一能当证据的档**：同状态必得同像素）。
+- 命令行客户端把它打进每帧那一行，**非证据档会当场说出来**（"非证据档：不可复现，不得用于验收"），
+  浏览器客户端在图像流旁边显示 `档 cpu-raster/v1`（证据档绿色，其它红色）。
+
+为什么这值得一个字段，而不是只写在文档里：**"一帧"这个形态是可以被别的东西灌进来的**——
+
+- **GPU 渲染档**：跨驱动/跨设备的浮点与光栅化差异做不到逐像素可复现；
+- **从别人的进程里钩出来的画面**：比如 [`veeenu/hudhook`](https://github.com/veeenu/hudhook)
+  那种（注入 DLL + hook 人家的 `Present`，Windows/Wine、dx9/11/12/opengl3）。
+  那种帧**跟我们的命令日志没有任何关系**：不可复现，也无法归因到某一版状态。
+
+这些帧不是"坏"的，但它们**不能混进证据**。所以每个档必须在
+`crates/stream/src/protocol.rs` 的 `FRAME_RENDERERS` 里登记，并说清自己算不算证据；
+`is_evidence_renderer()` 是唯一的判据，而 `scene verify` 那类验收只认 `cpu-raster/v1`。
+契约测试钉了两条：**证据档只能有一个**（多了就说明有人想把不可复现的东西也算成证据），
+且**每个档都必须在本文档里解释清楚**。
+
+顺带说清我们对"注入式 overlay"的立场（详见 `prd/rsi3d-harness/prior-art.md` §13）：
+**不做**——不往客户的进程里注入代码、不 hook 别人的渲染管线。要在客户的应用里显示我们的观测，
+走它们的官方插件 API，或者用本文档的浏览器并排视图（场景流 + 图像流）。
+
 ---
 
 ## 7. 安全边界与红线
@@ -167,20 +197,113 @@ rsi3d-harness stream http://127.0.0.1:8283 --token <T> --kind scene --from 0 --l
 
 ---
 
-## 10. 验证
+## 10. 客户端要声明自己能干什么（借 glow 与 wgpu 的纪律）
+
+做法来自 [`grovesNL/glow`](https://github.com/grovesNL/glow)：**能力是声明出来的，不是被假设的**。
+它把 `supported_extensions()` 放进 `HasContext` trait，于是 native 与 WebGL 两个后端都**必须**
+回答"你支持什么"，调用前先查而不是先假定。
+
+[`gfx-rs/wgpu`](https://github.com/gfx-rs/wgpu) 把这件事说得更细，我们照它的分法把声明拆成三类：
+
+| wgpu 的叫法 | 它的实质 | 我们对应什么 |
+| --- | --- | --- |
+| **features**（*"Features that are not guaranteed to be supported"*） | 有没有某项可选能力 | `scene` / `image` / `three` / `context-loss` |
+| **downlevel flags**（`wgpu_hal` 里每个后端存一份） | 老后端**缺**了什么 | `webgl1`——它不是与 `webgl2` 并列的能力，而是**降级档** |
+| **limits**（`Limits::downlevel_webgl2_defaults()` 这类） | 数值上限 | `?px=WxH`：客户端能显示多大 |
+
+原来我们只有服务端声明自己（`welcome.geometry = aabb-proxy`）。客户端那边是**猜**的：CDN 被拦、
+GPU 上下文丢失这类事，服务端**完全看不见**——`/healthz` 只会说"有 3 条连接"。
+
+```
+GET /stream/scene?token=T&agent=rsi3d-web/0.1.0&cap=webgl2,three,scene,image,context-loss
+GET /stream/frame?token=T&cap=image&px=240x180
+```
+
+| 能力名 | 类别 | 含义 | 谁声明 |
+| --- | --- | --- | --- |
+| `scene` | consume | 能消费场景流（glTF 快照 + 增量） | 浏览器、CLI（`--kind scene`） |
+| `image` | consume | 能消费图像流（PNG 帧） | 浏览器、CLI（`--kind frame`） |
+| `three` | render | 有**当下可用**的 three.js 客户端渲染路径 | 浏览器 |
+| `webgl2` | render | 本机有 WebGL2（正常档） | 浏览器 |
+| `webgl1` | **downlevel** | 只有 WebGL1（降级档） | 浏览器 |
+| `context-loss` | robustness | 会处理 GPU 上下文丢失/恢复，而不是假装没发生 | 浏览器 |
+| `headless` | form | 没有屏幕（命令行/服务端消费者） | CLI |
+
+规则只有两条：
+
+1. **声明走订阅 URL 的查询参数**，不走 `ClientMessage`——一条 SSE 连接就是一次订阅，
+   它是唯一天然带"连接身份"的位置；POST 那条通道（`/command`）服务端分不清是谁发的。
+2. **声明变了就断开重连并重新声明**。于是服务端的名册永远是真的，不需要"更新"这种
+   半新半旧的状态；而且新连接带 `from=<本地版本>` ⇒ 只补差量——这正好是"GPU 上下文
+   恢复后要重建场景"所需要的东西，一个机制解决两件事。
+
+### 服务端做什么：记账、派生结论、把问题说出来
+
+`welcome` 会**回声**（`client_agent` / `client_capabilities` / `client_render_tier`），
+`/healthz` 会报出名册——**包括派生出来的结论**，而不是把一堆标志丢给运维自己拼：
 
 ```bash
-cargo test -p rsi3d-harness-stream -p rsi3d-harness-serve   # 25 + 11 个用例
-bash scripts/smoke.sh                                        # 含真起服务的 31 项转流断言
+curl -s http://127.0.0.1:8283/healthz | jq '.clients[] | {agent, render_tier, capabilities, frame_px, notes}'
+```
+
+| 名册字段 | 含义 |
+| --- | --- |
+| `render_tier` | 派生的档位：`three` / `webgl2` / `webgl1-downlevel` / `frame-only` / `headless` / `unknown` |
+| `frame_px` | **实际**会给它发多大的帧（= 它的预算与服务端默认档取小） |
+| `notes[]` | 声明里的问题与降级说明，分三类：`contradiction`（自相矛盾）/ `unmet`（依赖没满足）/ `degraded`（能连但画不出来） |
+| `unknown[]` | 我们不认识的能力名（**不拒、但都不丢**） |
+
+三条硬规定：
+
+- **不认识的能力名不拒**（旧服务端 + 新客户端要能共存），但**绝不静默**：服务端打到 stderr，
+  名册里的 `unknown[]` 也带着它；
+- **矛盾与依赖没满足**要喊（wgpu 用 `MissingFeatures` 在建设备时就报错；我们只报不拒，
+  因为连接本身是好的）；**降级不喊**，它会在名册里以 `degraded` 出现；
+- 名册**只反映当下**：连上就写、断开就抹。为了让"断开"及时可信，服务端会主动探测对端是否
+  已经消失（SSE 是单向的，否则要到下一次写、最长一个心跳才发现——那段时间名册在说谎）。
+
+### 显示预算（limits）
+
+`?px=WxH` 是**上限**：服务端只**往下调**（等比缩放到这个框内），绝不超过自己的默认档；
+小到没意义会抬到下限（`MIN_FRAME_SIDE`）且不变形。目的很朴素：手机端不必收 480×360 的帧，
+4K 屏也不必被卡在这个尺寸。
+
+客户端侧的降级因此全部**可见**，而不是静默：
+
+| 情况 | 客户端行为 | 服务端看得到什么 |
+| --- | --- | --- |
+| CDN 取不到 three.js（离线/被拦） | 保留图像流，场景流重新声明为**无 `three`**，界面说明原因 | `render_tier` 从 `three` 降为 `webgl2` |
+| GPU 上下文丢失（驱动重置/休眠） | `preventDefault` 后重新声明为**无 GPU**；恢复时重建渲染器并重新拉全量 | `render_tier` 降为 `frame-only` |
+
+---
+
+## 11. 验证
+
+```bash
+cargo test -p rsi3d-harness-stream -p rsi3d-harness-serve   # 35 + 15 个用例
+bash scripts/smoke.sh                                        # 含真起服务的 49 项转流/契约断言
 ```
 
 `crates/serve/tests/http.rs` 是**真起 HTTP 服务、真用 socket 连**，覆盖：
 无令牌被拒、命令回执、静止场景零带宽、`Last-Event-ID` 续传只补差量、非法 id 退回全量、
-回滚表达成增量、HTTP/1.0 被拒、停服务后连接结束与端口释放。
+回滚表达成增量、HTTP/1.0 被拒、停服务后连接结束与端口释放，以及客户端声明的
+**回声/名册/断开即抹/未知能力名不拒但标出来**。
+
+`crates/stream/tests/gltf_corpus.rs` 是**语料驱动**的边界测试（做法借自 `gfx-rs/rspirv` 的
+「真实 blobs + 往返」）：9 份结构多样的场景（空/单/12 对象/重叠/超界/极薄片/无窗/多灯/Unicode），
+每份都要过**两层断言**：
+
+1. **结构自洽性**——按 glTF 的引用关系逐条查（`scenes[].nodes` 必须覆盖全部节点且下标在界内、
+   `mesh`/`accessor`/`bufferView` 下标有效、字节范围不越界、内嵌 base64 字节数与 `byteLength` 一致、
+   节点变换与 `extras.rsi3d.aabb` **逐轴一致**）；
+2. **往返一致**——导出的 glTF 读回来，节点表与源场景逐字段相同；再加上同状态两次导出字节相同。
+
+为什么两层都要：`scenes[].nodes` 写成空数组的那个 bug **能通过往返**（读回来只认扁平 `nodes` 池），
+**往返绿 ≠ 文件能用**。同一文件里还测了「编辑与回滚后导出」与「坏输入必须在进门时被拒」。
 
 ---
 
-## 11. 还没做
+## 12. 还没做
 
 - **GPU / 任意轨道相机**：图像流目前只有四个预置视角（CPU 软件光栅）。任意相机要等渲染管线升级。
 - **WebSocket / WebRTC 传输**：会话层与协议层没碰 HTTP，换传输只改 `crates/serve`。

@@ -14,6 +14,12 @@ packages/*/vendor/
 # 只忽略它与产物目录里可能的构建残留
 scaffolds/**/node_modules/
 
+# ── 派生出来的契约产物（contract/）──────────────────────────────────
+# **要进仓库**（别加进来）：它是"缓存"，但门禁 `contract --check` 与
+# `committed_artifacts_match_the_source` 靠"重新生成 == 已提交"来抓漂移；
+# 忽略掉它，那道门禁就永远绿，等于没有。
+# 重新生成：rsi3d-harness contract --out contract
+
 # ── 本地用户文件 ────────────────────────────────────────────────────
 # 外部模板与插件默认在 ~/.rsi3d-harness/（仓库外）；万一有人在本目录里试，
 # 也别让它们混进提交

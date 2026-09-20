@@ -15,7 +15,9 @@ use rsi3d_harness_core::{CommandRequest, Document, Scene};
 use rsi3d_harness_render::{render, RenderOptions, ViewKind};
 
 use crate::gltf::{diff_ids, scene_to_gltf};
-use crate::protocol::{Camera, ServerMessage, StreamKind, STREAM_PROTOCOL};
+use crate::protocol::{
+    Camera, ClientDeclaration, ServerMessage, StreamKind, RENDERER_CPU_RASTER, STREAM_PROTOCOL,
+};
 
 /// 默认帧尺寸（图像流）。480×360 在"看得清"与"上下文/带宽省"之间比较平衡。
 pub const DEFAULT_FRAME_WIDTH: u32 = 480;
@@ -30,6 +32,8 @@ pub const DEFAULT_FRAME_HEIGHT: u32 = 360;
 pub struct ServerSession {
     doc: Document,
     sub: Subscription,
+    /// 谁连上来了、它能做什么（未知就是 `unknown`，不编造）
+    client: ClientDeclaration,
 }
 
 impl ServerSession {
@@ -37,7 +41,18 @@ impl ServerSession {
         ServerSession {
             doc,
             sub: Subscription::new(kind, camera, width, height),
+            client: ClientDeclaration::default(),
         }
+    }
+
+    /// 记下客户端自报的身份与能力（在 `welcome` 之前调）。
+    pub fn set_client(&mut self, client: ClientDeclaration) -> &mut Self {
+        self.client = client;
+        self
+    }
+
+    pub fn client(&self) -> &ClientDeclaration {
+        &self.client
     }
 
     pub fn document(&self) -> &Document {
@@ -82,7 +97,14 @@ impl ServerSession {
     pub fn welcome(&mut self, from: Option<u32>) -> ServerMessage {
         let current = self.doc.revision();
         let resumed = self.sub.resume(from, current);
-        welcome_message(&self.doc, self.sub.kind, &self.sub.camera, resumed, current)
+        welcome_message(
+            &self.doc,
+            self.sub.kind,
+            &self.sub.camera,
+            resumed,
+            current,
+            &self.client,
+        )
     }
 
     /// 换相机（图像流会因此重渲；场景流下只作为提示回给客户端）。
@@ -195,6 +217,17 @@ impl Subscription {
         self
     }
 
+    /// 改帧尺寸（客户端声明的显示预算会被缩到这里）。
+    ///
+    /// 尺寸一变，上一张帧就不再代表"现在"了（哈希也会变）——所以清掉。
+    pub fn set_size(&mut self, width: u32, height: u32) {
+        if (width, height) != (self.width, self.height) {
+            self.width = width.max(1);
+            self.height = height.max(1);
+            self.known_image = None;
+        }
+    }
+
     pub fn set_camera(&mut self, camera: Camera) {
         // 相机变了，上一张帧就不再代表“现在”了
         self.known_image = None;
@@ -291,12 +324,16 @@ impl Subscription {
 // 这样多连接、CLI 客户端、测试都能复用同一份构造逻辑。
 
 /// 握手消息。
+///
+/// `client` 是客户端自报的身份与能力；**回声给客户端**，于是双方对"服务端到底听成
+/// 了什么"有一致的认识（与命令里的 `expect` 同一个道理：不靠默契，靠对账）。
 pub fn welcome_message(
     doc: &Document,
     kind: StreamKind,
     camera: &Camera,
     resumed: bool,
     current: u32,
+    client: &ClientDeclaration,
 ) -> ServerMessage {
     ServerMessage::Welcome {
         protocol: STREAM_PROTOCOL.to_string(),
@@ -309,6 +346,9 @@ pub fn welcome_message(
         // 老实说清几何档次：H0 是包围盒代理，别让客户端以为收到真网格
         geometry: crate::gltf::GEOMETRY_AABB_PROXY.to_string(),
         resumed,
+        client_agent: client.agent.clone(),
+        client_capabilities: client.capabilities.clone(),
+        client_render_tier: client.render_tier().to_string(),
     }
 }
 
@@ -387,6 +427,8 @@ pub fn frame_message(
         view: v.view.as_str().to_string(),
         width: v.width,
         height: v.height,
+        // 自报家门：这帧是 CPU 软件光栅渲的，所以它能当证据
+        renderer: RENDERER_CPU_RASTER.to_string(),
         image_hash: v.image_hash.clone(),
         png_base64: rsi3d_harness_render::png::base64(&v.png),
         band_occlusion: r.band_occlusion,

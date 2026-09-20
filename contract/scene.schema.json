@@ -1,0 +1,582 @@
+{
+  "$comment": "由 `#[derive(JsonSchema)]` 从 rsi3d-harness 的 Rust 类型**派生**（schemars）。`x-known-keys` 是喂给镜像门禁的键清单（仍从样例派生，两者一致性由 `typed_schema_covers_the_observed_inventory` 钉住）。重新生成：`rsi3d-harness contract --out contract`。",
+  "$defs": {
+    "Aabb": {
+      "description": "轴对齐包围盒（H0 的几何代理）。",
+      "properties": {
+        "max": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "min": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "type": "object"
+    },
+    "ClearanceRule": {
+      "additionalProperties": true,
+      "description": "间距规则：**行业知识被显式化的地方**（太远和太近都算违规）。",
+      "properties": {
+        "max": {
+          "format": "double",
+          "type": "number"
+        },
+        "min": {
+          "format": "double",
+          "type": "number"
+        },
+        "pair": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pair",
+        "min",
+        "max"
+      ],
+      "type": "object"
+    },
+    "Editability": {
+      "description": "可编辑程度。**由层推导，不单独存**（避免两处真相）。",
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "可局部编辑",
+          "type": "string"
+        },
+        {
+          "const": "crop-only",
+          "description": "只能裁剪 / 整体替换（高斯、点云的常见处境）",
+          "type": "string"
+        },
+        {
+          "const": "replace-only",
+          "description": "只能整体替换（重训产物）",
+          "type": "string"
+        }
+      ]
+    },
+    "IntentKeyword": {
+      "description": "意图关键词核查（H0 的语义维度）",
+      "properties": {
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "present": {
+          "default": false,
+          "type": "boolean"
+        },
+        "word": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "word"
+      ],
+      "type": "object"
+    },
+    "LayerKind": {
+      "description": "表示层：同一节点的不同承载方式（对应 glTF 同一 node 的不同 primitive）。",
+      "oneOf": [
+        {
+          "const": "mesh",
+          "description": "三角网格",
+          "type": "string"
+        },
+        {
+          "const": "gaussian",
+          "description": "3D 高斯（`KHR_gaussian_splatting`）",
+          "type": "string"
+        },
+        {
+          "const": "points",
+          "description": "点云",
+          "type": "string"
+        },
+        {
+          "const": "light",
+          "description": "光源（挂在节点上时）",
+          "type": "string"
+        },
+        {
+          "const": "camera",
+          "description": "相机",
+          "type": "string"
+        }
+      ]
+    },
+    "Light": {
+      "additionalProperties": true,
+      "description": "灯光。",
+      "properties": {
+        "color": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "direction": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "intensity": {
+          "default": 1.0,
+          "format": "double",
+          "type": "number"
+        },
+        "kind": {
+          "default": "directional",
+          "description": "`directional` | `hdri` | …（开放）",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "MaterialParams": {
+      "description": "材质数值参数（H0 只需要这几个）。",
+      "properties": {
+        "metallic": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "opacity": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "roughness": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Metrics": {
+      "description": "规模摘要（H0 只填三角面，其余留给 H3）。",
+      "properties": {
+        "gaussians": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "points": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "triangles": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "watertight": {
+          "description": "是否流形/水密（H3 接 `manifold` 后才有真值）",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": true,
+      "description": "场景节点。\n\n`id` 是 **stable_id**：Agent 的对话会跨越很多轮，`obj:sofa_01` 在多次 `edit` 之后\n必须仍然指向同一把沙发——这是 diff、归因、回滚的共同前提。",
+      "properties": {
+        "aabb": {
+          "$ref": "#/$defs/Aabb",
+          "description": "H0 的世界空间几何代理。"
+        },
+        "editability": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Editability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "由生产者**显式声明**的可编辑性上限（可选）。\n\n存在的意义：有些资产本身就是烘焙结果（例如在世界坐标里训练出来的高斯），\n它能被「整体替换」但不能被单独移动——这件事只有生产者知道，推导不出来。\n最终取值 = `max(声明值, 由层推导值)`，即**取最受限的那个**。"
+        },
+        "id": {
+          "type": "string"
+        },
+        "layers": {
+          "default": [
+            "mesh"
+          ],
+          "items": {
+            "$ref": "#/$defs/LayerKind"
+          },
+          "type": "array"
+        },
+        "material": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "material_params": {
+          "$ref": "#/$defs/MaterialParams"
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "role": {
+          "default": "furniture",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "aabb"
+      ],
+      "type": "object"
+    },
+    "Origin": {
+      "description": "来源：谁造的这个节点（用于归因与「换资产」判定）。",
+      "enum": [
+        "unknown",
+        "imported",
+        "generated",
+        "edited"
+      ],
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "来源信息。H3 引入真实几何后，这里会带 mesh 哈希与算法版本。",
+      "properties": {
+        "created_at_rev": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_coordinate_system": {
+          "description": "导入时的来源坐标系（PLY 常为 RDF、GLB 常为 LUF、SPZ 默认 RUB…）——转系时 SH 要用 Wigner-D 旋转。",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Room": {
+      "additionalProperties": true,
+      "description": "房间。",
+      "properties": {
+        "ceiling": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "size": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "wallColor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "size"
+      ],
+      "type": "object"
+    },
+    "Window": {
+      "additionalProperties": true,
+      "description": "窗（H0 单窗；与已发布模板的 `window` 键一致）。",
+      "properties": {
+        "bandDepth": {
+          "default": 1.5,
+          "description": "窗前多少米内算「挡光带」",
+          "format": "double",
+          "type": "number"
+        },
+        "height": {
+          "format": "double",
+          "type": "number"
+        },
+        "spanX": {
+          "description": "窗在 X 轴上的跨度 [x0, x1]",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "wall": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "z": {
+          "description": "窗所在平面的 Z 坐标",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "spanX",
+        "height",
+        "z"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "场景 = 一棵节点树 + 环境 + 行业规则。",
+  "properties": {
+    "clearance_rules": {
+      "items": {
+        "$ref": "#/$defs/ClearanceRule"
+      },
+      "type": "array"
+    },
+    "coordinate_system": {
+      "default": "RUB",
+      "description": "内部统一坐标系（glTF 约定：右手、+Y 向上）。导入时必须归一化到这里。",
+      "type": "string"
+    },
+    "intent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "intent_keywords": {
+      "items": {
+        "$ref": "#/$defs/IntentKeyword"
+      },
+      "type": "array"
+    },
+    "lights": {
+      "items": {
+        "$ref": "#/$defs/Light"
+      },
+      "type": "array"
+    },
+    "objects": {
+      "default": [],
+      "description": "节点列表。JSON 键沿用 `objects`（已发布模板的契约），也接受 `nodes` 作为别名。",
+      "items": {
+        "$ref": "#/$defs/Node"
+      },
+      "type": "array"
+    },
+    "room": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Room"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_coordinate_system": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "spec": {
+      "default": "rsi3d-scene/v1",
+      "type": "string"
+    },
+    "units": {
+      "default": "m",
+      "type": "string"
+    },
+    "up_axis": {
+      "default": "Y",
+      "type": "string"
+    },
+    "window": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Window"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "title": "rsi3d scene",
+  "type": "object",
+  "x-known-keys": [
+    "aabb",
+    "bandDepth",
+    "ceiling",
+    "clearance_rules",
+    "clearance_rules.max",
+    "clearance_rules.min",
+    "clearance_rules.pair",
+    "clearance_rules.reason",
+    "color",
+    "coordinate_system",
+    "created_at_rev",
+    "direction",
+    "editability",
+    "geometry",
+    "height",
+    "id",
+    "intensity",
+    "intent",
+    "intent_keywords",
+    "intent_keywords.note",
+    "intent_keywords.present",
+    "intent_keywords.word",
+    "kind",
+    "layers",
+    "lights",
+    "lights.color",
+    "lights.direction",
+    "lights.id",
+    "lights.intensity",
+    "lights.kind",
+    "material",
+    "material_params",
+    "max",
+    "mesh_ref",
+    "metallic",
+    "metrics",
+    "min",
+    "note",
+    "objects",
+    "objects.aabb",
+    "objects.aabb.max",
+    "objects.aabb.min",
+    "objects.editability",
+    "objects.id",
+    "objects.layers",
+    "objects.material",
+    "objects.material_params",
+    "objects.material_params.metallic",
+    "objects.material_params.opacity",
+    "objects.material_params.roughness",
+    "objects.metrics",
+    "objects.metrics.triangles",
+    "objects.metrics.watertight",
+    "objects.provenance",
+    "objects.provenance.created_at_rev",
+    "objects.provenance.origin",
+    "objects.provenance.source",
+    "objects.provenance.source_coordinate_system",
+    "objects.role",
+    "objects.rsi3d",
+    "objects.rsi3d.geometry",
+    "objects.rsi3d.mesh_ref",
+    "opacity",
+    "origin",
+    "pair",
+    "present",
+    "provenance",
+    "reason",
+    "role",
+    "room",
+    "room.ceiling",
+    "room.size",
+    "room.wallColor",
+    "roughness",
+    "rsi3d",
+    "size",
+    "source",
+    "source_coordinate_system",
+    "spanX",
+    "spec",
+    "triangles",
+    "units",
+    "up_axis",
+    "wall",
+    "wallColor",
+    "watertight",
+    "window",
+    "window.bandDepth",
+    "window.height",
+    "window.spanX",
+    "window.wall",
+    "window.z",
+    "word",
+    "z"
+  ]
+}

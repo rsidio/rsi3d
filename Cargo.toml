@@ -8,6 +8,8 @@ members = [
     "crates/scaffold",
     "crates/stream",
     "crates/serve",
+    "crates/contract",
+    "crates/io",
     "crates/native",
 ]
 
@@ -15,7 +17,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/rsi3d/rsi3d"
+repository = "https://github.com/rsidio/rsi3d"
 homepage = "https://rsi3d.com"
 
 [workspace.dependencies]
@@ -27,6 +29,8 @@ serde_json = "1"
 sha2 = "0.10"
 # CLI 调用平台 HTTP API（不开 multipart 特性：那会拖进 multer，multipart 是手写的）
 ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
+# 解别人的 zip 要能读 deflate（写侧只用 store，不压缩）
+flate2 = "1"
 
 [profile.release]
 strip = true

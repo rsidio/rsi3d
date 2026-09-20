@@ -14,6 +14,7 @@ use crate::scene::{
 
 /// 节点在视图里的样子。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NodeView {
     pub id: String,
     pub role: String,
@@ -30,6 +31,7 @@ pub struct NodeView {
 
 /// 场景视图：评测与 Agent 观测的直接输入。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SceneView {
     pub spec: String,
     pub units: String,

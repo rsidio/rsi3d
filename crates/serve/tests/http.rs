@@ -12,7 +12,7 @@ use serde_json::json;
 use rsi3d_harness_core::Document;
 use rsi3d_harness_serve::peer;
 use rsi3d_harness_serve::{serve, ServeOptions};
-use rsi3d_harness_stream::protocol::{ServerMessage, StreamKind};
+use rsi3d_harness_stream::protocol::{ClientDeclaration, ServerMessage, StreamKind};
 
 const SCENE: &str = r##"{
   "units": "m",
@@ -296,9 +296,23 @@ fn frame_stream_carries_png_and_servers_own_measurement() {
 
     let frame = p.next_message().unwrap().unwrap();
     match &frame {
-        ServerMessage::Frame { view, width, height, image_hash, band_occlusion, .. } => {
+        ServerMessage::Frame {
+            view,
+            width,
+            height,
+            renderer,
+            image_hash,
+            band_occlusion,
+            ..
+        } => {
             assert_eq!(view, "top");
             assert_eq!((*width, *height), (480, 360));
+            // 帧必须自报家门：谁渲的、能不能当证据（GPU 档/钩出来的画面不得冒充）
+            assert_eq!(renderer, rsi3d_harness_stream::RENDERER_CPU_RASTER);
+            assert!(
+                rsi3d_harness_stream::is_evidence_renderer(renderer),
+                "图像流的帧是我们自己的确定性光栅，应当是证据档"
+            );
             assert_eq!(image_hash.len(), 64, "sha256");
             // 图像流的价值：结论随帧一起到（浏览器不用自己算视觉）
             assert!(
@@ -352,6 +366,152 @@ fn observe_endpoint_matches_the_kernel() {
 }
 
 #[test]
+fn clients_declare_what_they_can_do_and_the_server_keeps_books() {
+    let h = start("s3cret");
+    let base = h.base_url();
+    let path = peer::stream_path_with_client(
+        StreamKind::Scene,
+        None,
+        "s3cret",
+        None,
+        &ClientDeclaration {
+            agent: "rsi3d-web/0.1.0".into(),
+            capabilities: vec![
+                "webgl2".into(),
+                "three".into(),
+                "time-machine".into(),
+                // 顺带一个自相矛盾的档：同一件事只能有一个
+                "webgl1".into(),
+            ],
+            frame_budget: None,
+        },
+    );
+    assert!(path.contains("agent=rsi3d-web"), "{}", path);
+    assert!(path.contains("cap=webgl2%2Cthree%2Ctime-machine"), "{}", path);
+    let mut c = peer::connect(&base, &path).unwrap();
+
+    // 握手**回声**：客户端据此确认服务端真的听懂了（听不懂就是静默降级）
+    let first = c.next_message().unwrap().expect("应当先收到 welcome");
+    match first {
+        ServerMessage::Welcome {
+            client_agent,
+            client_capabilities,
+            ..
+        } => {
+            assert_eq!(client_agent, "rsi3d-web/0.1.0");
+            assert_eq!(client_capabilities[0], "webgl2");
+            assert!(client_capabilities.contains(&"time-machine".to_string()));
+        }
+        other => panic!("第一条应当是 welcome，实际是 {:?}", other),
+    }
+
+    // 服务端名册：连上就写。不认识的能力名**不拒**，但要如实标出来
+    let (_, body) = peer::get(&base, "/healthz").unwrap();
+    let hz: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let clients = hz["clients"].as_array().expect("healthz 要有 clients");
+    assert_eq!(clients.len(), 1, "{}", body);
+    assert_eq!(clients[0]["agent"], "rsi3d-web/0.1.0");
+    assert_eq!(clients[0]["kind"], "scene");
+    assert_eq!(clients[0]["unknown"][0], "time-machine");
+    // 派生结论（别让运维自己拼字符串）：这个客户端到底能画到什么程度
+    assert_eq!(clients[0]["render_tier"], "three");
+    // 声明本身的问题（矛盾/依赖）与降级都要记下来，但不拒连接
+    let notes = clients[0]["notes"].as_array().unwrap();
+    assert!(
+        notes.iter().any(|n| n["kind"] == "contradiction"),
+        "webgl1+webgl2 应当被标成自相矛盾：{}",
+        body
+    );
+    // 词汇表也在 healthz 里（外部工具靠它知道能声明什么）
+    assert!(hz["capabilities_known"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["name"] == "webgl2"));
+
+    // 断开就抹：名册**永远是当下真的连着的**，不是"连过"的历史
+    drop(c);
+    let mut gone = None;
+    for _ in 0..40 {
+        let (_, body) = peer::get(&base, "/healthz").unwrap();
+        let hz: serde_json::Value = serde_json::from_str(&body).unwrap();
+        if hz["clients"].as_array().unwrap().is_empty() {
+            gone = Some(());
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(gone.is_some(), "断开后名册里不该还留着这个客户端");
+}
+
+#[test]
+fn contract_artifacts_are_served_from_the_same_source() {
+    let h = start("s3cret");
+    let base = h.base_url();
+
+    // 索引不需要令牌：它只说"有哪些形状"，不含资产数据
+    let (code, body) = peer::get(&base, "/contract").unwrap();
+    assert_eq!(code, 200, "{}", body);
+    let index: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let names: Vec<&str> = index["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"scene.schema.json"), "{:?}", names);
+
+    // 真产物：必须与 `rsi3d-harness contract` 写出来的字节**一模一样**
+    // （服务端也是现算的，不读磁盘）
+    for (name, want) in rsi3d_harness_contract::artifacts() {
+        let (code, got) = peer::get(&base, &format!("/contract/{}", name)).unwrap();
+        assert_eq!(code, 200, "{}", name);
+        assert_eq!(got, want, "服务端给的 {} 与派生的不一致", name);
+    }
+
+    // 不存在的东西要明确 404（并且告诉调用者有哪些）
+    let (code, body) = peer::get(&base, "/contract/nope.json").unwrap();
+    assert_eq!(code, 404);
+    assert!(body.contains("scene.schema.json"), "{}", body);
+}
+
+#[test]
+fn a_frame_budget_decision_is_honored_and_reported() {
+    let h = start("tk");
+
+    let base = h.base_url();
+
+    // 客户端声明的**显示预算**（wgpu 那套的 limits）：服务端只缩不放，并等比
+    let path = format!(
+        "{}",
+        peer::stream_path(StreamKind::Frame, Some("top"), "tk", None)
+    ) + "&agent=rsi3d-web%2F0.1.0&cap=image&px=240x180";
+    let mut f = peer::connect(&base, &path).unwrap();
+    assert_eq!(f.status, 200);
+
+    // 真发出来的帧就是 240×180（不是声明完就算）
+    let mut got = None;
+    for _ in 0..3 {
+        match f.next_message().unwrap() {
+            Some(ServerMessage::Frame { width, height, .. }) => {
+                got = Some((width, height));
+                break;
+            }
+            Some(_) => continue,
+            None => break,
+        }
+    }
+    assert_eq!(got, Some((240, 180)), "帧应当按客户端预算缩到 240×180");
+
+    // 名册里也要能看出**实际**会给它发多大
+    let (_, body) = peer::get(&base, "/healthz").unwrap();
+    let hz: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(hz["clients"][0]["frame_px"], "240x180", "{}", body);
+    assert_eq!(hz["clients"][0]["render_tier"], "frame-only");
+    h.stop();
+}
+
+#[test]
 fn http_10_clients_are_refused_clearly() {
     let h = start("tk");
     // 手写一个 HTTP/1.0 请求：tiny_http 会为 1.0 选 Identity 编码（无分块），
@@ -361,9 +521,17 @@ fn http_10_clients_are_refused_clearly() {
     use std::io::{Read, Write};
     sock.write_all(b"GET /stream/scene?token=tk HTTP/1.0\r\nHost: localhost\r\n\r\n")
         .unwrap();
+    // 读到 EOF 再断言：响应分两次 write（头 + 体），一次 read 可能只拿到头——
+    // 并行跑测试时这条会偶发失败（实测），所以不能假设"一次 read = 一个响应"。
+    let mut text = String::new();
     let mut buf = [0u8; 512];
-    let n = sock.read(&mut buf).unwrap();
-    let text = String::from_utf8_lossy(&buf[..n]).to_string();
+    loop {
+        match sock.read(&mut buf) {
+            Ok(0) => break, // 426 带 Connection: close，服务端会关
+            Ok(n) => text.push_str(&String::from_utf8_lossy(&buf[..n])),
+            Err(_) => break, // 读超时兜底
+        }
+    }
     assert!(text.contains("426"), "HTTP/1.0 应当被明确拒绝：{}", text);
     assert!(text.contains("http_1_1_required"), "{}", text);
     h.stop();
@@ -411,4 +579,48 @@ fn stop_ends_streams_and_releases_the_listener() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+// ---------------------------------------------------------------- 几何 side-car
+
+/// 起一个带几何 side-car 的服务（`None` = 这个文档没有几何文件）。
+fn start_with_mesh(token: &str, mesh: Option<Vec<u8>>) -> rsi3d_harness_serve::ServeHandle {
+    let mut opts = ServeOptions::new(Document::from_scene_json(SCENE).unwrap())
+        .with_token(token)
+        .with_port(0)
+        .with_fps(4);
+    if let Some(m) = mesh {
+        opts = opts.with_mesh(m);
+    }
+    serve(opts).expect("服务应当能启动")
+}
+
+/// 几何 side-car 这条路由的三件事：**给的是原字节**、**没有就老实 404**、**一样要令牌**。
+///
+/// 为什么要单测它：浏览器靠它把包围盒换成真网格。以前这条链只有"服务端文档"，
+/// 没有"几何文件"的概念——一旦这条路由静默失败，客户端只会安静地画回盒子，
+/// 没人会看出问题。
+#[test]
+fn mesh_sidecar_is_served_byte_for_byte_and_404_is_honest() {
+    // 这里不要求是真的 GLB：这条路由的职责是"把交给它的字节原样送出去"，
+    // GLB 合不合法由导入层（`crates/io`）的用例负责。
+    let bytes = b"glTF\x02\x00\x00\x00MARKSIDECAR".to_vec();
+    let h = start_with_mesh("tk", Some(bytes));
+    let base = h.base_url();
+
+    let (code, body) = peer::get(&base, "/mesh.glb?token=tk").unwrap();
+    assert_eq!(code, 200, "{}", body);
+    assert!(body.starts_with("glTF"), "magic 得原样：{}", body);
+    assert!(body.contains("MARKSIDECAR"), "内容是原字节：{}", body);
+
+    // 令牌这条线对几何一样有效（几何是资产数据，不是形状描述）
+    let (code, body) = peer::get(&base, "/mesh.glb").unwrap();
+    assert_eq!(code, 401, "{}", body);
+
+    // 没有几何文件的文档：404，并且说清**怎么办**
+    let h2 = start_with_mesh("tk", None);
+    let (code, body) = peer::get(&h2.base_url(), "/mesh.glb?token=tk").unwrap();
+    assert_eq!(code, 404, "{}", body);
+    assert!(body.contains("no_mesh_sidecar"), "{}", body);
+    assert!(body.contains("--no-mesh"), "错误里得给出路：{}", body);
 }
