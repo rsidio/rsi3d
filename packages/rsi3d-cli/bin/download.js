@@ -10,7 +10,11 @@ const os = require("os");
 const path = require("path");
 const { target, exeName } = require("./launcher");
 
-const DEFAULT_BASE = "https://github.com/rsi3d/rsi3d/releases/latest/download";
+// ⚠️ 组织名是 **rsidio** 不是 rsi3d —— 仓库在 github.com/rsidio/rsi3d，
+//    package.json 的 repository 和 README 的 clone 命令也都是 rsidio。
+//    写成 rsi3d/rsi3d 不会有任何本地报错（本地构建路径优先），只有在用户
+//    postinstall 走远端下载时才暴露成 404，且提示信息不会指向这里。
+const DEFAULT_BASE = "https://github.com/rsidio/rsi3d/releases/latest/download";
 
 function base() {
   return (process.env.RSI3D_RELEASE_BASE || DEFAULT_BASE).replace(/\/+$/, "");
